@@ -18,11 +18,11 @@ global.PDFLib = PDFLib;
 const PdfGenerator = require('../extension/lib/pdf-generator');
 
 // Helper: create a minimal valid PNG data URL
-function createTestPngDataUrl(width = 2, height = 2) {
+function createTestPngDataUrl(/* width = 2, height = 2 */) {
   // Minimal 2x2 red pixel PNG in base64
   return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVQIW2P8z8BQDwQMYBIALBkD8VnduZIAAAAASUVORK5CYII=';
 }
-
+// eslint-disable-next-line no-unused-vars
 function createTestJpgDataUrl() {
   // Minimal JPEG data URL (1x1 white pixel)
   return 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AVMAA/9k=';

@@ -4,7 +4,8 @@
  * Runs in service-worker context (loaded via importScripts after pdf-lib).
  */
 
-/* global PDFLib, WSN_CONSTANTS, StorageManager, SessionManager */
+/* global PDFLib, WSN_CONSTANTS, SessionManager */
+/* eslint-disable no-unused-vars */
 
 const PdfGenerator = (() => {
   /**

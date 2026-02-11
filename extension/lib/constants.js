@@ -5,6 +5,7 @@
  * In content script context, embedded directly.
  */
 
+/* eslint-disable no-unused-vars */
 /* global self */
 
 const WSN_CONSTANTS = {

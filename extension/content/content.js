@@ -12,6 +12,46 @@
   // Prevent double injection
   if (document.getElementById('wsn-root')) return;
 
+  // ─── Extension Context Guard ──────────────────
+  // When the extension is reloaded/updated, old content scripts on open tabs
+  // lose their connection to chrome.runtime. We detect this and clean up.
+  let contextDead = false;
+
+  function isContextValid() {
+    if (contextDead) return false;
+    try {
+      return !!(chrome.runtime && chrome.runtime.id);
+    } catch (_) {
+      contextDead = true;
+      return false;
+    }
+  }
+
+  function selfDestruct() {
+    // Extension was reloaded – remove all injected UI from the page
+    contextDead = true;
+    try { host.remove(); } catch (_) { /* ignore */ }
+    try { if (regionOverlay) regionOverlay.remove(); } catch (_) { /* ignore */ }
+  }
+
+  // Silently suppress all extension-context errors
+  window.addEventListener('error', (event) => {
+    if (event.error && String(event.error.message || '').includes('Extension context invalidated')) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selfDestruct();
+      return true;
+    }
+  }, true);
+  window.addEventListener('unhandledrejection', (event) => {
+    const msg = event.reason && (event.reason.message || String(event.reason));
+    if (msg && String(msg).includes('Extension context invalidated')) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      selfDestruct();
+    }
+  }, true);
+
   // ─── Constants (inline to avoid import) ──────
   const MSG = {
     GET_SESSION: 'GET_SESSION',
@@ -57,9 +97,11 @@
   // ─── Containers ───────────────────────────────
   const floatingIcon = createFloatingIcon();
   const panel = createPanel();
+  const backdrop = createBackdrop();
   const toastContainer = createToastContainer();
 
   shadow.appendChild(floatingIcon);
+  shadow.appendChild(backdrop);
   shadow.appendChild(panel);
   shadow.appendChild(toastContainer);
 
@@ -74,14 +116,8 @@
   function createFloatingIcon() {
     const el = document.createElement('div');
     el.className = 'wsn-floating-icon';
-    el.innerHTML = `
-      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="3" y="3" width="22" height="22" rx="4" stroke="#818cf8" stroke-width="2" fill="none"/>
-        <circle cx="14" cy="14" r="4" fill="#818cf8"/>
-        <path d="M14 6V8M14 20V22M6 14H8M20 14H22" stroke="#818cf8" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-    `;
-    el.title = 'WebSnap Notes';
+    el.innerHTML = '📸';
+    el.title = 'WebSnap Notes - Click to open';
     el.style.display = 'none';
     el.addEventListener('click', togglePanel);
     return el;
@@ -106,7 +142,16 @@
     return el;
   }
 
+  function createBackdrop() {
+    const el = document.createElement('div');
+    el.className = 'wsn-backdrop';
+    el.style.display = 'none';
+    el.addEventListener('click', closePanel);
+    return el;
+  }
+
   function togglePanel() {
+    if (!isContextValid()) { selfDestruct(); return; }
     if (panelOpen) {
       closePanel();
     } else {
@@ -115,16 +160,31 @@
   }
 
   async function openPanel() {
+    if (!isContextValid()) { selfDestruct(); return; }
     panelOpen = true;
     await refreshPanelContent();
+    backdrop.style.display = 'block';
     panel.style.display = 'flex';
-    panel.classList.add('wsn-panel--open');
+    
+    // Trigger animations
+    requestAnimationFrame(() => {
+      backdrop.classList.add('wsn-visible');
+      panel.classList.add('wsn-panel--open');
+    });
   }
 
   function closePanel() {
     panelOpen = false;
+    backdrop.classList.remove('wsn-visible');
     panel.classList.remove('wsn-panel--open');
-    panel.style.display = 'none';
+    
+    // Hide after animation completes
+    setTimeout(() => {
+      if (!panelOpen) {
+        backdrop.style.display = 'none';
+        panel.style.display = 'none';
+      }
+    }, 200);
   }
 
   async function refreshPanelContent() {
@@ -137,11 +197,12 @@
     // Header
     const header = el('div', 'wsn-panel__header');
     header.innerHTML = `
-      <div class="wsn-panel__title">
-        <svg width="18" height="18" viewBox="0 0 28 28" fill="none"><rect x="3" y="3" width="22" height="22" rx="4" stroke="#818cf8" stroke-width="2" fill="none"/><circle cx="14" cy="14" r="4" fill="#818cf8"/></svg>
-        <span>WebSnap Notes</span>
+      <div class="wsn-header-icon">WS</div>
+      <div class="wsn-header-content">
+        <div class="wsn-panel__title">WebSnap Notes</div>
+        <div class="wsn-header-version">v1.0.0</div>
       </div>
-      <button class="wsn-btn wsn-btn--icon wsn-panel__close" title="Close">&times;</button>
+      <button class="wsn-panel__close" title="Close">&times;</button>
     `;
     header.querySelector('.wsn-panel__close').addEventListener('click', closePanel);
     panel.appendChild(header);
@@ -159,11 +220,20 @@
     const view = el('div', 'wsn-panel__body');
 
     view.innerHTML = `
-      <div class="wsn-form-group">
-        <label class="wsn-label">Session Name</label>
-        <input type="text" class="wsn-input" placeholder="e.g., System Design Notes" maxlength="100" />
+      <div class="wsn-session-info">
+        <div class="wsn-session-name">New Session</div>
+        <div class="wsn-session-meta">
+          <div class="wsn-status-dot"></div>
+          Ready to start
+        </div>
       </div>
-      <button class="wsn-btn wsn-btn--primary wsn-btn--full">Start Session</button>
+      
+      <div class="wsn-label">Session Name</div>
+      
+      <div class="wsn-controls">
+        <input type="text" class="wsn-input" placeholder="e.g., System Design Notes" maxlength="100" />
+        <button class="wsn-btn--primary">Start Capture Session</button>
+      </div>
     `;
 
     const input = view.querySelector('.wsn-input');
@@ -193,7 +263,7 @@
       } else {
         showToast(result.message || 'Failed to start session.', 'error');
         btn.disabled = false;
-        btn.textContent = 'Start Session';
+        btn.textContent = 'Start Capture Session';
       }
     });
 
@@ -212,8 +282,8 @@
         <div class="wsn-modal__title">Session Active</div>
         <p class="wsn-modal__text">A session is currently active.<br>Do you want to end the current session and start a new one?</p>
         <div class="wsn-modal__actions">
-          <button class="wsn-btn wsn-btn--ghost" data-action="cancel">Cancel</button>
-          <button class="wsn-btn wsn-btn--danger" data-action="overwrite">End &amp; Start New</button>
+          <button class="wsn-btn--secondary" data-action="cancel">Cancel</button>
+          <button class="wsn-btn--primary" data-action="overwrite">End & Start New</button>
         </div>
       </div>
     `;
@@ -244,43 +314,51 @@
 
     const view = el('div', 'wsn-panel__body');
 
-    // Status bar
-    const statusDot = isPaused ? '⏸' : '●';
+    // Status dot and text
     const statusText = isPaused ? 'Paused' : 'Active';
-    const statusClass = isPaused ? 'wsn-status--paused' : 'wsn-status--active';
 
     view.innerHTML = `
       <div class="wsn-session-info">
         <div class="wsn-session-name">${escapeHtml(session.name)}</div>
         <div class="wsn-session-meta">
-          <span class="${statusClass}">${statusDot} ${statusText}</span>
-          <span class="wsn-capture-count">${session.screenshotCount} capture${session.screenshotCount !== 1 ? 's' : ''}</span>
+          <div class="wsn-status-dot"></div>
+          ${statusText} • ${session.screenshotCount} capture${session.screenshotCount !== 1 ? 's' : ''}
         </div>
       </div>
 
-      <div class="wsn-section">
-        <label class="wsn-label">Capture Mode</label>
-        <div class="wsn-toggle-group">
-          <button class="wsn-toggle ${settings.captureMode === 'visible' ? 'wsn-toggle--active' : ''}" data-mode="visible">Visible</button>
-          <button class="wsn-toggle ${settings.captureMode === 'region' ? 'wsn-toggle--active' : ''}" data-mode="region">Region</button>
-        </div>
+      <div class="wsn-label">Capture Mode</div>
+      
+      <div class="wsn-toggle-group">
+        <button class="wsn-toggle ${settings.captureMode === 'visible' ? 'wsn-toggle--active' : ''}" data-mode="visible">Full Page</button>
+        <button class="wsn-toggle ${settings.captureMode === 'region' ? 'wsn-toggle--active' : ''}" data-mode="region">Region</button>
       </div>
 
-      <div class="wsn-section wsn-controls">
+      <div class="wsn-controls">
         ${isPaused
-    ? '<button class="wsn-btn wsn-btn--primary wsn-btn--full" data-action="resume">▶ Resume</button>'
-    : '<button class="wsn-btn wsn-btn--ghost wsn-btn--full" data-action="pause">⏸ Pause</button>'}
-        <button class="wsn-btn wsn-btn--ghost wsn-btn--full" data-action="delete-last" ${session.screenshotCount === 0 ? 'disabled' : ''}>🗑 Delete Last</button>
+    ? '<button class="wsn-btn--pause">▶ Resume Session</button>'
+    : '<button class="wsn-btn--pause">⏸ Pause Session</button>'}
+        <button class="wsn-btn--delete" data-action="delete-last" ${session.screenshotCount === 0 ? 'disabled' : ''}>🗑 Delete Last Capture</button>
       </div>
 
-      <div class="wsn-section wsn-preview-section">
-        <label class="wsn-label">Preview</label>
-        <div class="wsn-preview-grid" id="wsn-preview-grid"></div>
+      <div class="wsn-preview-container">
+        <div class="wsn-label">Captured Screenshots</div>
+        <div class="wsn-preview-grid" id="wsn-preview-grid">
+          <div class="wsn-preview-empty">
+            <div class="wsn-preview-empty-icon">📸</div>
+            <div class="wsn-preview-empty-text">No captures yet<br>Press Alt+Shift+S or use the floating icon</div>
+          </div>
+        </div>
       </div>
 
-      <div class="wsn-section wsn-export-section">
-        <button class="wsn-btn wsn-btn--primary wsn-btn--full" data-action="export" ${session.screenshotCount === 0 ? 'disabled' : ''}>📄 Export PDF</button>
-        <button class="wsn-btn wsn-btn--danger wsn-btn--full wsn-btn--small" data-action="end-session">End Session</button>
+      <div class="wsn-phone-section">
+        <button class="wsn-btn--phone">
+          📱 Upload from Phone
+        </button>
+      </div>
+
+      <div class="wsn-export-section">
+        <button class="wsn-btn--primary" data-action="export" ${session.screenshotCount === 0 ? 'disabled' : ''}>📄 Export PDF Report</button>
+        <button class="wsn-btn--end" data-action="end-session">End Session</button>
       </div>
     `;
 
@@ -296,15 +374,15 @@
     });
 
     // Controls
-    view.querySelector('[data-action="pause"]')?.addEventListener('click', async () => {
-      await sendMessage({ type: MSG.PAUSE_SESSION });
-      showToast('Session paused.', 'info');
-      await refreshPanelContent();
-    });
-
-    view.querySelector('[data-action="resume"]')?.addEventListener('click', async () => {
-      await sendMessage({ type: MSG.RESUME_SESSION });
-      showToast('Session resumed!', 'success');
+    const pauseResumeBtn = view.querySelector('.wsn-btn--pause');
+    pauseResumeBtn.addEventListener('click', async () => {
+      if (isPaused) {
+        await sendMessage({ type: MSG.RESUME_SESSION });
+        showToast('Session resumed!', 'success');
+      } else {
+        await sendMessage({ type: MSG.PAUSE_SESSION });
+        showToast('Session paused.', 'info');
+      }
       await refreshPanelContent();
     });
 
@@ -330,7 +408,7 @@
       } else {
         showToast(result.message || 'Export failed.', 'error');
         btn.disabled = false;
-        btn.textContent = '📄 Export PDF';
+        btn.textContent = '📄 Export PDF Report';
       }
     });
 
@@ -342,6 +420,11 @@
       await sendMessage({ type: MSG.END_SESSION });
       showToast('Session ended.', 'info');
       await refreshPanelContent();
+    });
+
+    // Phone upload handler
+    view.querySelector('.wsn-btn--phone')?.addEventListener('click', async () => {
+      showToast('QR code feature coming soon!', 'info');
     });
 
     panel.appendChild(view);
@@ -358,17 +441,46 @@
     const thumbnails = result.thumbnails || [];
 
     if (thumbnails.length === 0) {
-      grid.innerHTML = '<div class="wsn-preview-empty">No captures yet. Press Alt+Shift+S</div>';
+      grid.innerHTML = `
+        <div class="wsn-preview-empty">
+          <div class="wsn-preview-empty-icon">📸</div>
+          <div class="wsn-preview-empty-text">No captures yet<br>Press Alt+Shift+S or use the floating icon</div>
+        </div>
+      `;
       return;
     }
 
     grid.innerHTML = '';
     thumbnails.forEach((thumb, idx) => {
-      const img = document.createElement('div');
-      img.className = 'wsn-thumb';
-      img.style.backgroundImage = `url(${thumb.dataUrl})`;
-      img.title = `#${idx + 1} – ${thumb.tabTitle || 'Untitled'}`;
-      grid.appendChild(img);
+      const thumbEl = document.createElement('div');
+      thumbEl.className = 'wsn-thumb';
+      thumbEl.innerHTML = `
+        <img src="${thumb.dataUrl}" alt="Capture #${idx + 1}" />
+        <div class="wsn-preview-badge">#${idx + 1}</div>
+        <button class="wsn-thumb-delete" data-index="${idx}" title="Delete this capture">×</button>
+        <div class="wsn-thumb-caption">${escapeHtml(thumb.tabTitle || thumb.url || 'Untitled')}</div>
+      `;
+
+      // Delete button handler
+      thumbEl.querySelector('.wsn-thumb-delete').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const confirmed = confirm(`Delete capture #${idx + 1}?`);
+        if (confirmed) {
+          const result = await sendMessage({ type: MSG.DELETE_CAPTURE, index: idx });
+          if (result.success) {
+            showToast('Capture deleted', 'info');
+            await refreshPanelContent();
+          }
+        }
+      });
+
+      // Click to view (optional enhancement)
+      thumbEl.addEventListener('click', () => {
+        // Could add fullscreen preview in future
+        showToast(`Capture #${idx + 1}: ${thumb.tabTitle || 'Untitled'}`, 'info');
+      });
+
+      grid.appendChild(thumbEl);
     });
   }
 
@@ -386,14 +498,14 @@
     regionOverlay.style.cssText = `
       position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
       z-index: 2147483646; cursor: crosshair;
-      background: rgba(0,0,0,0.3);
+      background: rgba(0,0,0,0.4);
     `;
 
     const selection = document.createElement('div');
     selection.id = 'wsn-region-selection';
     selection.style.cssText = `
-      position: absolute; border: 2px solid #818cf8;
-      background: rgba(129,140,248,0.1);
+      position: absolute; border: 2px solid white;
+      background: rgba(255,255,255,0.1);
       display: none; pointer-events: none;
     `;
     regionOverlay.appendChild(selection);
@@ -401,9 +513,9 @@
     const hint = document.createElement('div');
     hint.style.cssText = `
       position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-      background: rgba(30,30,46,0.9); color: #cdd6f4; padding: 8px 16px;
+      background: rgba(11,11,11,0.95); color: white; padding: 10px 16px;
       border-radius: 8px; font: 13px/1.4 -apple-system, sans-serif;
-      pointer-events: none;
+      pointer-events: none; border: 1px solid #333;
     `;
     hint.textContent = 'Drag to select region • ESC to cancel';
     regionOverlay.appendChild(hint);
@@ -463,32 +575,42 @@
   }
 
   function cropAndSave(x, y, w, h) {
-    const dpr = window.devicePixelRatio || 1;
-    const canvas = document.createElement('canvas');
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
+    try {
+      const dpr = window.devicePixelRatio || 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
 
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
 
-    img.onload = () => {
-      ctx.drawImage(
-        img,
-        x * dpr, y * dpr, w * dpr, h * dpr,
-        0, 0, w * dpr, h * dpr
-      );
+      img.onload = () => {
+        try {
+          ctx.drawImage(
+            img,
+            x * dpr, y * dpr, w * dpr, h * dpr,
+            0, 0, w * dpr, h * dpr
+          );
 
-      const croppedDataUrl = canvas.toDataURL('image/png');
-      sendMessage({ type: MSG.SAVE_REGION_CAPTURE, dataUrl: croppedDataUrl });
-      removeRegionOverlay();
-    };
+          const croppedDataUrl = canvas.toDataURL('image/png');
+          sendMessage({ type: MSG.SAVE_REGION_CAPTURE, dataUrl: croppedDataUrl });
+          removeRegionOverlay();
+        } catch (_) {
+          showToast('Failed to process region capture.', 'error');
+          removeRegionOverlay();
+        }
+      };
 
-    img.onerror = () => {
+      img.onerror = () => {
+        showToast('Failed to process region capture.', 'error');
+        removeRegionOverlay();
+      };
+
+      img.src = regionImageData;
+    } catch (_) {
       showToast('Failed to process region capture.', 'error');
       removeRegionOverlay();
-    };
-
-    img.src = regionImageData;
+    }
   }
 
   function removeRegionOverlay() {
@@ -558,53 +680,67 @@
 
   function sendMessage(msg) {
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage(msg, (response) => {
-        if (chrome.runtime.lastError) {
-          console.warn('WebSnap: sendMessage error', chrome.runtime.lastError.message);
-          resolve({ error: chrome.runtime.lastError.message });
-          return;
-        }
-        resolve(response || {});
-      });
+      if (!isContextValid()) {
+        selfDestruct();
+        resolve({});
+        return;
+      }
+      try {
+        chrome.runtime.sendMessage(msg, (response) => {
+          if (chrome.runtime.lastError) {
+            // Silently handle – includes "Extension context invalidated"
+            resolve({});
+            return;
+          }
+          resolve(response || {});
+        });
+      } catch (_) {
+        contextDead = true;
+        selfDestruct();
+        resolve({});
+      }
     });
   }
 
-  // Listen for messages from background
-  chrome.runtime.onMessage.addListener((message) => {
-    switch (message.type) {
-    case MSG.ACTIVATION_CHANGED:
-      isActivated = message.activated;
-      if (isActivated) {
-        showFloatingIcon();
-      } else {
-        hideFloatingIcon();
-        closePanel();
+  // Listen for messages from background (only if context is still valid)
+  if (isContextValid()) {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (!isContextValid()) return;
+      switch (message.type) {
+      case MSG.ACTIVATION_CHANGED:
+        isActivated = message.activated;
+        if (isActivated) {
+          showFloatingIcon();
+        } else {
+          hideFloatingIcon();
+          closePanel();
+        }
+        break;
+
+      case MSG.SESSION_RESTORED:
+        currentSession = message.session;
+        showToast('Previous session restored.', 'info');
+        if (panelOpen) refreshPanelContent();
+        break;
+
+      case MSG.CAPTURE_COMPLETE:
+        showToast(`Screenshot #${message.count} captured!`, 'success', 1500);
+        if (message.warning === 'MEMORY_WARNING') {
+          setTimeout(() => showToast('⚠ Memory usage above 80%. Consider exporting.', 'warning', 4000), 1800);
+        }
+        if (panelOpen) refreshPanelContent();
+        break;
+
+      case MSG.START_REGION_SELECT:
+        startRegionSelect(message.imageData);
+        break;
+
+      case MSG.SHOW_TOAST:
+        showToast(message.message, message.variant || 'info');
+        break;
       }
-      break;
-
-    case MSG.SESSION_RESTORED:
-      currentSession = message.session;
-      showToast('Previous session restored.', 'info');
-      if (panelOpen) refreshPanelContent();
-      break;
-
-    case MSG.CAPTURE_COMPLETE:
-      showToast(`Screenshot #${message.count} captured!`, 'success', 1500);
-      if (message.warning === 'MEMORY_WARNING') {
-        setTimeout(() => showToast('⚠ Memory usage above 80%. Consider exporting.', 'warning', 4000), 1800);
-      }
-      if (panelOpen) refreshPanelContent();
-      break;
-
-    case MSG.START_REGION_SELECT:
-      startRegionSelect(message.imageData);
-      break;
-
-    case MSG.SHOW_TOAST:
-      showToast(message.message, message.variant || 'info');
-      break;
-    }
-  });
+    });
+  }
 
   // ═══════════════════════════════════════════════
   //  INITIALIZATION
@@ -654,7 +790,7 @@
 
   function getStyles() {
     return `
-      /* ─── Reset ─── */
+      /* ─── Reset & Base ─── */
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
       /* ─── Floating Icon ─── */
@@ -664,220 +800,446 @@
         right: 20px;
         width: 44px;
         height: 44px;
-        background: #1e1e2e;
-        border: 1px solid #313244;
+        background: #0B0B0B;
+        border: 1px solid #333;
         border-radius: 12px;
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
         pointer-events: auto;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+        transition: all 150ms ease;
         z-index: 2147483647;
+        color: white;
+        font-size: 18px;
       }
       .wsn-floating-icon:hover {
-        transform: scale(1.08);
-        box-shadow: 0 6px 20px rgba(129,140,248,0.3);
-        border-color: #818cf8;
+        transform: scale(1.05);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.8);
+        border-color: #555;
       }
-      .wsn-floating-icon:active { transform: scale(0.96); }
+      .wsn-floating-icon:active { transform: scale(0.95); }
 
-      /* ─── Panel ─── */
+      /* ─── Backdrop Blur ─── */
+      .wsn-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.1);
+        backdrop-filter: blur(2px);
+        z-index: 2147483646;
+        opacity: 0;
+        transition: opacity 200ms ease-in-out;
+        pointer-events: none;
+      }
+      .wsn-backdrop.wsn-visible {
+        opacity: 1;
+      }
+
+      /* ─── Panel Container ─── */
       .wsn-panel {
         position: fixed;
         top: 0;
-        right: -360px;
-        width: 340px;
+        right: -420px;
+        width: 400px;
         height: 100vh;
-        background: #1e1e2e;
-        border-left: 1px solid #313244;
+        background: #0B0B0B;
+        border-left: 1px solid #333;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 14px;
+        line-height: 1.4;
+        color: white;
         display: flex;
         flex-direction: column;
-        pointer-events: auto;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 13px;
-        color: #cdd6f4;
-        transition: right 0.25s ease;
-        box-shadow: -4px 0 24px rgba(0,0,0,0.4);
-        overflow-y: auto;
         z-index: 2147483647;
+        box-shadow: -8px 0 32px rgba(0, 0, 0, 0.6);
+        transition: right 200ms ease-in-out;
+        overflow: hidden;
+        pointer-events: auto;
       }
-      .wsn-panel--open { right: 0; }
+      .wsn-panel.wsn-panel--open {
+        right: 0;
+      }
 
+      /* ─── Header ─── */
       .wsn-panel__header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        padding: 14px 16px;
-        border-bottom: 1px solid #313244;
+        padding: 20px;
+        border-bottom: 1px solid #333;
+        gap: 12px;
         flex-shrink: 0;
       }
-      .wsn-panel__title {
+      .wsn-header-icon {
+        width: 24px;
+        height: 24px;
+        background: white;
+        border-radius: 6px;
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-weight: 600;
+        justify-content: center;
         font-size: 14px;
-        color: #cdd6f4;
+        color: black;
+        font-weight: 600;
       }
-      .wsn-panel__close {
-        font-size: 20px;
-        line-height: 1;
-        color: #6c7086;
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 2px 6px;
-        border-radius: 4px;
-      }
-      .wsn-panel__close:hover { background: #313244; color: #cdd6f4; }
-
-      .wsn-panel__body {
-        padding: 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
+      .wsn-header-content {
         flex: 1;
       }
+      .wsn-panel__title {
+        font-size: 16px;
+        font-weight: 600;
+        color: white;
+        margin-bottom: 2px;
+      }
+      .wsn-header-version {
+        font-size: 11px;
+        color: #888;
+        font-weight: 400;
+      }
+      .wsn-panel__close {
+        width: 28px;
+        height: 28px;
+        border: none;
+        background: transparent;
+        color: #888;
+        cursor: pointer;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+        transition: all 150ms ease;
+      }
+      .wsn-panel__close:hover {
+        background: #1A1A1A;
+        color: white;
+      }
 
-      /* ─── Session Info ─── */
+      /* ─── Panel Body ─── */
+      .wsn-panel__body {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      .wsn-panel__body::-webkit-scrollbar { width: 4px; }
+      .wsn-panel__body::-webkit-scrollbar-track { background: transparent; }
+      .wsn-panel__body::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+      /* ─── Session Card ─── */
       .wsn-session-info {
-        background: #181825;
-        border-radius: 10px;
-        padding: 14px;
-        border: 1px solid #313244;
+        margin: 20px;
+        padding: 16px;
+        background: #1A1A1A;
+        border: 1px solid #333;
+        border-radius: 12px;
+        flex-shrink: 0;
       }
       .wsn-session-name {
-        font-weight: 600;
         font-size: 15px;
-        margin-bottom: 6px;
-        color: #cdd6f4;
+        font-weight: 600;
+        color: white;
+        margin-bottom: 8px;
       }
       .wsn-session-meta {
         display: flex;
-        gap: 12px;
-        font-size: 12px;
-        color: #a6adc8;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #999;
       }
-      .wsn-status--active { color: #a6e3a1; }
-      .wsn-status--paused { color: #fab387; }
-      .wsn-capture-count { color: #89b4fa; }
+      .wsn-status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #22C55E;
+      }
 
-      /* ─── Forms ─── */
-      .wsn-form-group { display: flex; flex-direction: column; gap: 6px; }
+      /* ─── Section Labels ─── */
       .wsn-label {
+        margin: 24px 20px 12px 20px;
         font-size: 11px;
         font-weight: 600;
+        color: #666;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        color: #a6adc8;
+        flex-shrink: 0;
       }
-      .wsn-input {
-        background: #181825;
-        border: 1px solid #313244;
-        border-radius: 8px;
-        padding: 10px 12px;
-        color: #cdd6f4;
-        font-size: 13px;
-        outline: none;
-        transition: border-color 0.15s;
-        font-family: inherit;
-      }
-      .wsn-input:focus { border-color: #818cf8; }
-      .wsn-input--error { border-color: #f38ba8; }
 
-      /* ─── Buttons ─── */
-      .wsn-btn {
-        border: none;
-        border-radius: 8px;
-        padding: 10px 16px;
-        font-size: 13px;
-        font-weight: 500;
-        cursor: pointer;
-        font-family: inherit;
-        transition: background 0.15s, opacity 0.15s;
-      }
-      .wsn-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-      .wsn-btn--primary {
-        background: #818cf8;
-        color: #1e1e2e;
-      }
-      .wsn-btn--primary:hover:not(:disabled) { background: #6c71c4; }
-      .wsn-btn--ghost {
-        background: #313244;
-        color: #cdd6f4;
-      }
-      .wsn-btn--ghost:hover:not(:disabled) { background: #45475a; }
-      .wsn-btn--danger {
-        background: #f38ba8;
-        color: #1e1e2e;
-      }
-      .wsn-btn--danger:hover:not(:disabled) { background: #e06c8a; }
-      .wsn-btn--icon {
-        background: none;
-        padding: 4px 8px;
-      }
-      .wsn-btn--full { width: 100%; }
-      .wsn-btn--small { font-size: 11px; padding: 6px 12px; }
-
-      /* ─── Toggle Group ─── */
+      /* ─── Capture Mode Toggle ─── */
       .wsn-toggle-group {
+        margin: 0 20px 24px 20px;
         display: flex;
-        gap: 4px;
-        background: #181825;
-        border-radius: 8px;
-        padding: 3px;
-        border: 1px solid #313244;
+        background: #1A1A1A;
+        border: 1px solid #333;
+        border-radius: 10px;
+        padding: 4px;
+        flex-shrink: 0;
       }
       .wsn-toggle {
         flex: 1;
-        padding: 7px 12px;
-        background: transparent;
+        padding: 10px 16px;
         border: none;
-        border-radius: 6px;
-        color: #a6adc8;
-        font-size: 12px;
+        background: transparent;
+        color: #999;
+        font-size: 13px;
         font-weight: 500;
+        border-radius: 8px;
         cursor: pointer;
-        transition: all 0.15s;
+        transition: all 150ms ease;
         font-family: inherit;
       }
-      .wsn-toggle--active {
-        background: #818cf8;
-        color: #1e1e2e;
+      .wsn-toggle.wsn-toggle--active {
+        background: white;
+        color: black;
+        font-weight: 600;
       }
-      .wsn-toggle:hover:not(.wsn-toggle--active) { background: #313244; }
+      .wsn-toggle:not(.wsn-toggle--active):hover {
+        color: white;
+        background: rgba(255, 255, 255, 0.05);
+      }
 
-      /* ─── Sections ─── */
-      .wsn-section { display: flex; flex-direction: column; gap: 8px; }
-      .wsn-controls { gap: 6px; }
+      /* ─── Controls Section ─── */
+      .wsn-controls {
+        margin: 0 20px 24px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex-shrink: 0;
+      }
+      .wsn-btn {
+        border: none;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        font-family: inherit;
+        transition: all 150ms ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      }
+      .wsn-btn--pause {
+        padding: 12px 20px;
+        background: #1A1A1A;
+        border: 1px solid #333;
+        color: white;
+      }
+      .wsn-btn--pause:hover:not(:disabled) {
+        background: #252525;
+        border-color: #444;
+      }
+      .wsn-btn--delete {
+        padding: 10px 20px;
+        background: transparent;
+        border: 1px solid #333;
+        color: #666;
+        font-size: 13px;
+        border-radius: 8px;
+      }
+      .wsn-btn--delete:hover:not(:disabled) {
+        color: #999;
+        border-color: #444;
+      }
+      .wsn-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+      }
 
-      /* ─── Preview Grid ─── */
+      /* ─── Preview Section ─── */
+      .wsn-preview-container {
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+      }
       .wsn-preview-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 6px;
-        max-height: 240px;
-        overflow-y: auto;
-        padding-right: 4px;
+        padding: 0 20px 20px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
       }
+
       .wsn-thumb {
-        aspect-ratio: 16/9;
-        background-size: cover;
-        background-position: center;
-        border-radius: 6px;
-        border: 1px solid #313244;
-        cursor: default;
-        transition: border-color 0.15s;
+        position: relative;
+        background: #1A1A1A;
+        border: 1px solid #333;
+        border-radius: 10px;
+        overflow: hidden;
+        cursor: pointer;
+        transition: all 150ms ease;
+        flex-shrink: 0;
       }
-      .wsn-thumb:hover { border-color: #818cf8; }
-      .wsn-preview-empty {
-        grid-column: 1/-1;
-        text-align: center;
-        padding: 20px 10px;
-        color: #6c7086;
+      .wsn-thumb:hover {
+        border-color: #444;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      }
+      .wsn-thumb img {
+        width: 100%;
+        height: 200px;
+        object-fit: cover;
+        display: block;
+      }
+      .wsn-preview-badge {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 8px;
+        border-radius: 6px;
+        backdrop-filter: blur(8px);
+      }
+      .wsn-thumb-delete {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        width: 24px;
+        height: 24px;
+        background: rgba(220, 38, 38, 0.9);
+        border: none;
+        color: white;
+        border-radius: 6px;
         font-size: 12px;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 150ms ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .wsn-thumb:hover .wsn-thumb-delete {
+        opacity: 1;
+      }
+      .wsn-thumb-caption {
+        padding: 10px 12px;
+        font-size: 12px;
+        color: #999;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        border-top: 1px solid #252525;
+      }
+      .wsn-preview-empty {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+        text-align: center;
+        gap: 12px;
+        padding: 40px 20px;
+      }
+      .wsn-preview-empty-icon {
+        font-size: 32px;
+        opacity: 0.5;
+      }
+      .wsn-preview-empty-text {
+        font-size: 14px;
+        line-height: 1.5;
+      }
+
+      /* ─── Phone Section ─── */
+      .wsn-phone-section {
+        margin: 20px;
+        flex-shrink: 0;
+      }
+      .wsn-btn--phone {
+        width: 100%;
+        padding: 14px 20px;
+        background: #1A1A1A;
+        border: 1px solid #333;
+        color: #999;
+        font-size: 14px;
+        font-weight: 500;
+        border-radius: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        transition: all 150ms ease;
+      }
+      .wsn-btn--phone:hover {
+        background: #252525;
+        border-color: #444;
+        color: white;
+      }
+
+      /* ─── Actions Section ─── */
+      .wsn-export-section {
+        padding: 20px;
+        border-top: 1px solid #333;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        flex-shrink: 0;
+      }
+      .wsn-btn--primary {
+        width: 100%;
+        padding: 14px 20px;
+        background: white;
+        border: none;
+        color: black;
+        font-size: 14px;
+        font-weight: 600;
+        border-radius: 10px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: all 150ms ease;
+      }
+      .wsn-btn--primary:hover:not(:disabled) {
+        background: #f5f5f5;
+        transform: translateY(-1px);
+      }
+      .wsn-btn--primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .wsn-btn--end {
+        width: 100%;
+        padding: 12px 20px;
+        background: transparent;
+        border: 1px solid #333;
+        color: #666;
+        font-size: 13px;
+        font-weight: 500;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 150ms ease;
+      }
+      .wsn-btn--end:hover {
+        color: #DC2626;
+        border-color: #DC2626;
+      }
+
+      /* ─── Forms ─── */
+      .wsn-input {
+        background: #1A1A1A;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 10px 12px;
+        color: white;
+        font-size: 14px;
+        outline: none;
+        transition: border-color 150ms ease;
+        font-family: inherit;
+        width: 100%;
+      }
+      .wsn-input:focus { 
+        border-color: #555;
       }
 
       /* ─── Modal ─── */
@@ -891,30 +1253,46 @@
         z-index: 100;
       }
       .wsn-modal {
-        background: #1e1e2e;
-        border: 1px solid #313244;
+        background: #0B0B0B;
+        border: 1px solid #333;
         border-radius: 12px;
         padding: 24px;
-        max-width: 280px;
+        max-width: 320px;
         width: 100%;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.8);
       }
       .wsn-modal__title {
         font-weight: 600;
-        font-size: 15px;
+        font-size: 16px;
         margin-bottom: 8px;
-        color: #cdd6f4;
+        color: white;
       }
       .wsn-modal__text {
-        font-size: 13px;
-        color: #a6adc8;
-        margin-bottom: 16px;
+        font-size: 14px;
+        color: #999;
+        margin-bottom: 20px;
         line-height: 1.5;
       }
       .wsn-modal__actions {
         display: flex;
-        gap: 8px;
+        gap: 12px;
         justify-content: flex-end;
+      }
+      .wsn-btn--secondary {
+        padding: 10px 16px;
+        background: transparent;
+        border: 1px solid #333;
+        color: #999;
+        font-size: 13px;
+        font-weight: 500;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 150ms ease;
+      }
+      .wsn-btn--secondary:hover {
+        background: #1A1A1A;
+        color: white;
+        border-color: #444;
       }
 
       /* ─── Toast ─── */
@@ -929,16 +1307,16 @@
         z-index: 2147483647;
       }
       .wsn-toast {
-        background: #1e1e2e;
-        border: 1px solid #313244;
+        background: #0B0B0B;
+        border: 1px solid #333;
         border-radius: 8px;
-        padding: 10px 16px;
-        font-size: 12px;
-        color: #cdd6f4;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+        padding: 12px 16px;
+        font-size: 13px;
+        color: white;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.6);
         opacity: 0;
         transform: translateY(8px);
-        transition: opacity 0.25s, transform 0.25s;
+        transition: opacity 250ms ease, transform 250ms ease;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         max-width: 300px;
         display: flex;
@@ -946,28 +1324,21 @@
         gap: 8px;
       }
       .wsn-toast--visible { opacity: 1; transform: translateY(0); }
-      .wsn-toast--success { border-left: 3px solid #a6e3a1; }
-      .wsn-toast--error { border-left: 3px solid #f38ba8; }
-      .wsn-toast--warning { border-left: 3px solid #fab387; }
-      .wsn-toast--info { border-left: 3px solid #89b4fa; }
+      .wsn-toast--success { border-left: 3px solid #22C55E; }
+      .wsn-toast--error { border-left: 3px solid #DC2626; }
+      .wsn-toast--warning { border-left: 3px solid #F59E0B; }
+      .wsn-toast--info { border-left: 3px solid #3B82F6; }
       .wsn-toast--undo { display: flex; align-items: center; gap: 12px; }
       .wsn-undo-btn {
         white-space: nowrap;
-        color: #89b4fa !important;
+        color: #3B82F6 !important;
         text-decoration: underline;
         background: none !important;
         padding: 2px 4px !important;
         font-size: 12px !important;
+        border: none !important;
+        cursor: pointer;
       }
-
-      /* ─── Scrollbar ─── */
-      ::-webkit-scrollbar { width: 5px; }
-      ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
-      ::-webkit-scrollbar-thumb:hover { background: #585b70; }
-
-      /* ─── Export Section ─── */
-      .wsn-export-section { margin-top: auto; gap: 8px; }
     `;
   }
 })();

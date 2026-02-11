@@ -19,7 +19,7 @@ function createPng(size) {
   // Build raw RGBA pixel data
   const pixels = Buffer.alloc(size * size * 4);
   const center = size / 2;
-  const outerRadius = size * 0.42;
+  // const outerRadius = size * 0.42; // Future use
   const innerRadius = size * 0.18;
   const cornerRadius = size * 0.18;
 
@@ -68,7 +68,7 @@ function createPng(size) {
         const lineStart = size * 0.22;
         const lineEnd = size * 0.34;
         const lineStart2 = size * 0.66;
-        const lineEnd2 = size * 0.78;
+        // const lineEnd2 = size * 0.78; // Future use
 
         const onVerticalLine = Math.abs(x - center) < lineWidth &&
           ((y >= size * 0.12 && y <= lineStart + size * 0.12) || (y >= lineStart2 && y <= size * 0.88));

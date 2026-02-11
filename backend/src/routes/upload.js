@@ -58,7 +58,9 @@ router.post('/:sessionId', upload.single('image'), (req, res) => {
 });
 
 // Error handler for multer
-router.use((err, req, res, _next) => {
+// Error handling middleware
+// eslint-disable-next-line no-unused-vars
+router.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({ error: 'File too large. Maximum size is 10MB.' });

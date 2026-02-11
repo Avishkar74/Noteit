@@ -72,5 +72,5 @@ jobs:
           file: docker/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/websnap-backend:latest
-            ghcr.io/${{ github.repository_owner }}/websnap-backend:v${{ github.run_number }}
+            ghcr.io/${{ toLower(github.repository_owner) }}/noteit:latest
+            ghcr.io/${{ toLower(github.repository_owner) }}/noteit:v${{ github.run_number }}
