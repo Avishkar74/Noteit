@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+tests
+coverage
+.git
+.github
+.eslintrc*
+jest.config.js
+*.md
+extension
+scripts
+docker
+.gitignore

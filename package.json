@@ -1,0 +1,22 @@
+{
+  "name": "websnap-notes",
+  "version": "0.2.0",
+  "description": "WebSnap Notes – Universal Screenshot to PDF Chrome Extension",
+  "private": true,
+  "scripts": {
+    "test": "jest --verbose",
+    "test:coverage": "jest --coverage --verbose",
+    "test:watch": "jest --watch",
+    "lint": "eslint extension/ backend/ tests/",
+    "setup": "node scripts/setup.js",
+    "generate-icons": "node scripts/generate-icons.js"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "eslint": "^8.56.0",
+    "@jest/globals": "^29.7.0"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  }
+}

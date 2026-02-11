@@ -1,0 +1,908 @@
+📄 MASTER PRODUCT REQUIREMENTS DOCUMENT (FINAL)
+🧾 Project Name
+WebSnap Notes – Universal Screenshot to PDF Chrome Extension
+1️⃣ Product Vision
+
+WebSnap Notes is a Chromium-based browser extension that enables users to:
+
+Capture visible or selected portions of webpages
+
+Build a live screenshot session in the background
+
+Export collected screenshots into a structured PDF
+
+(Phase 3) Upload handwritten notes from phone via QR
+
+Core philosophy:
+
+“Browse normally. Press one key. Your notes build themselves.”
+
+2️⃣ Product Boundaries (Very Important)
+This Product IS:
+
+A Chromium browser extension
+
+A screenshot session builder
+
+A PDF export tool
+
+Local-first by default
+
+Optional backend-powered QR upload tool (Phase 3)
+
+This Product is NOT:
+
+A cloud sync tool
+
+A note-taking editor
+
+An annotation app (future scope)
+
+A screen recorder
+
+A system-level screenshot tool
+
+A Firefox extension
+
+An AI-powered tool
+
+These boundaries must NOT be violated.
+
+3️⃣ Complete User Flow (End-to-End)
+🧑‍💻 Primary User Flow – Standard Usage
+Step 1: Installation
+
+User installs extension.
+
+User clicks extension icon.
+
+Floating bottom-right control icon appears.
+
+Step 2: Start a Session
+
+User clicks floating icon.
+
+Right-side panel opens.
+
+User enters session name (e.g., “System Design Notes”).
+
+User clicks Start Session.
+
+Extension enters ACTIVE mode.
+
+Panel can now be closed.
+
+Step 3: Capture Screenshots
+
+User browsing normally.
+
+User presses hotkey:
+
+Ctrl + Shift + S
+
+
+System behavior:
+
+Background service worker receives command.
+
+Full visible viewport captured.
+
+If capture mode = Visible:
+
+Image directly added to session.
+
+If capture mode = Region:
+
+Overlay injected.
+
+User drags selection.
+
+Coordinates captured.
+
+Cropped via Canvas.
+
+Cropped image added to session.
+
+Capture counter increments.
+
+No popup.
+No disruption.
+
+Step 4: Preview Session
+
+User clicks floating icon.
+
+Panel shows:
+
+Session name
+
+Capture count
+
+Thumbnail preview list
+
+Delete last capture button
+
+Pause / Resume
+
+Export button
+
+Step 5: Export PDF
+
+User clicks Export PDF.
+
+System:
+
+Generate PDF using pdf-lib.
+
+Each screenshot = new page.
+
+Maintain aspect ratio.
+
+Trigger download.
+
+Clear session (or allow restart option).
+
+✂️ Screenshot Feature Flow
+Visible Viewport Mode
+
+Flow:
+
+Hotkey → captureVisibleTab() → base64 → store in session array.
+
+No cropping.
+
+Region Selection Mode
+
+Flow:
+
+captureVisibleTab()
+
+Inject overlay
+
+User drag start (x1, y1)
+
+User drag end (x2, y2)
+
+Compute rectangle
+
+Multiply coordinates by devicePixelRatio
+
+Canvas crop
+
+Export cropped base64
+
+Store in session
+
+Not Supported (MVP)
+
+Full page scroll stitching
+
+OS-level screenshot capture
+
+Clipboard auto-detection
+
+📱 Mobile Upload Flow (Phase 3)
+User Flow – Upload From Phone
+
+User opens panel.
+
+Clicks Upload from Phone.
+
+Extension:
+
+Generates session ID
+
+Requests backend for upload link
+
+Backend:
+
+Returns temporary upload URL
+
+Extension:
+
+Displays QR code containing:
+
+https://yourdomain.com/upload/{sessionId}
+
+On Mobile Device
+
+User scans QR.
+
+Phone opens upload page.
+
+User:
+
+Takes photo OR
+
+Selects image
+
+Image uploaded to backend.
+
+Backend:
+
+Emits WebSocket event to extension
+
+Extension:
+
+Receives image
+
+Adds to current session
+
+Backend Requirements
+
+Node.js (v20)
+
+Express
+
+Socket.io
+
+HTTPS only
+
+Rate limiting
+
+Temporary storage
+
+Auto-delete uploads after expiration
+
+Token-based session authentication
+
+4️⃣ Functional Requirements
+Session Management
+
+One active session at a time
+
+Max 100 screenshots
+
+Soft memory limit 200MB
+
+Warning at 80%
+
+Pause / Resume
+
+Delete last
+
+Restore on browser restart
+
+Screenshot Engine
+
+Must use chrome.tabs.captureVisibleTab()
+
+Region selection via Canvas cropping
+
+devicePixelRatio correction required
+
+Storage
+
+chrome.storage.local
+
+No automatic cloud sync
+
+No background upload
+
+PDF Generation
+
+Library: pdf-lib
+
+Generate only on export
+
+No background regeneration
+
+5️⃣ Non-Functional Requirements
+Category	Requirement
+Performance	Capture < 200ms
+Reliability	No session loss
+Privacy	No screenshot telemetry
+Compatibility	Chromium only
+Accessibility	Keyboard navigable panel
+Security	No data leaves device unless user triggers QR
+6️⃣ DevOps & Infrastructure
+🐳 Dockerization
+
+Starts in Phase 3 (Backend only).
+
+Requirements:
+
+Multi-stage build
+
+Node 20 Alpine
+
+Expose port 3000
+
+.env excluded
+
+.dockerignore required
+
+📦 Container Registry
+
+Use:
+GitHub Container Registry (GHCR)
+
+Rules:
+
+Push images ONLY from main branch
+
+Tag with semantic version
+
+Format:
+
+ghcr.io/<org-name>/websnap-backend:vX.Y.Z
+
+7️⃣ CI/CD Requirements
+CI (All Branches)
+
+Trigger:
+
+Push to any branch
+
+Pull request to main
+
+Must:
+
+Lint
+
+Build extension
+
+Run backend tests (if exists)
+
+Build Docker image (backend phase)
+
+Fail on error
+
+Must NOT:
+
+Push to GHCR
+
+Deploy
+
+CD (Main Branch Only)
+
+Trigger:
+
+Push to main
+
+Must:
+
+Build Docker image
+
+Tag version
+
+Push to GHCR
+
+Deploy container
+
+8️⃣ Branching Strategy (MANDATORY)
+
+No direct commits to main.
+
+Structure:
+
+main
+│
+├── phase-1-core
+├── phase-2-region
+├── phase-3-backend
+└── phase-4-infra
+
+
+Workflow:
+
+Develop in phase branch
+
+Push → CI runs
+
+Fix until CI passes
+
+Open PR
+
+Merge into main
+
+CD triggers
+
+9️⃣ Versioning Strategy
+
+Semantic versioning required.
+
+Phase 1 → v0.1.0
+
+Phase 2 → v0.2.0
+
+Phase 3 → v0.3.0
+
+Stable release → v1.0.0
+
+Version bump only on merge to main.
+
+🔟 Repository Structure
+/extension
+/backend
+/.github/workflows
+/docker
+README.md
+JOURNEY.md
+
+📚 Documentation Requirements
+README.md
+
+Must include:
+
+Overview
+
+Setup instructions
+
+Extension install guide
+
+Backend setup
+
+Docker usage
+
+CI/CD explanation
+
+Version history
+
+JOURNEY.md (Mandatory)
+
+Must document:
+
+Why project was built
+
+Initial commit state
+
+Phase-by-phase changes
+
+Problems faced
+
+Architectural decisions
+
+Docker + GHCR setup
+
+CI/CD setup
+
+Lessons learned
+
+This tracks development from:
+Initial commit → Final production
+
+🚫 Strict Non-Goals
+
+Do NOT implement:
+
+Cloud sync
+
+OCR
+
+Annotation tools
+
+AI
+
+Multi-user accounts
+
+Firefox support
+
+Full page stitching (Phase 5+)
+
+🎯 Acceptance Criteria
+
+Each phase complete only if:
+
+CI passes
+
+No critical console errors
+
+Manual testing passes
+
+PR merged
+
+Version tagged
+
+🏁 Final Target State
+
+By Phase 4:
+
+Stable extension
+
+Region selection working
+
+QR upload working
+
+Dockerized backend
+
+GHCR publishing
+
+Automated CI/CD
+
+Protected main branch
+
+Clean versioning
+
+Full documentation
+
+This PRD now contains:
+
+Product definition
+
+User flows
+
+Feature flows
+
+Screenshot architecture
+
+Backend architecture
+
+Mobile upload flow
+
+DevOps strategy
+
+Branching rules
+
+Docker + GHCR
+
+CI/CD
+
+Documentation requirements
+
+Non-goals
+
+Acceptance criteria
+
+
+1️⃣ Region Selection UI – Native Chrome Style or Custom?
+✅ Decision: Custom Look (Clean & Minimal)
+
+We will NOT replicate Chrome’s exact native snipping style.
+
+Reasons:
+
+Chrome native style is OS-controlled
+
+Hard to match pixel-perfect
+
+Not required for usability
+
+Custom gives branding flexibility
+
+Requirements:
+
+Semi-transparent dark overlay
+
+Clear rectangular selection box
+
+Subtle border (1–2px)
+
+Crosshair cursor
+
+Smooth drag animation
+
+ESC cancels selection
+
+Must feel:
+
+Lightweight, professional, not flashy
+
+2️⃣ Starting New Session While One is Active
+✅ Decision: Prompt to Confirm Overwrite
+
+If user tries to start a new session while one is active:
+
+Show modal:
+
+“A session is currently active.
+Do you want to end the current session and start a new one?”
+
+Options:
+
+Cancel
+
+End & Start New
+
+We DO NOT:
+
+Automatically overwrite
+
+Block completely without explanation
+
+User must confirm.
+
+3️⃣ Session Restore Behavior
+✅ Decision: Restore on ANY Restart or Crash
+
+Whether:
+
+Normal browser close
+
+Crash
+
+Force close
+
+System restart
+
+If session data exists in chrome.storage.local:
+
+On next launch:
+
+Restore session
+
+Show banner:
+
+“Previous session restored.”
+
+Session should never silently disappear.
+
+4️⃣ UI Framework Choice
+✅ Decision: Plain JavaScript (No Framework for MVP)
+
+Reasons:
+
+Chrome extension environment
+
+Minimal complexity
+
+Smaller bundle
+
+Faster development
+
+No React/Vite overhead
+
+Backend complexity already exists later.
+
+If scaling later:
+We can migrate to lightweight framework.
+
+For MVP:
+
+Plain JS + modular structure.
+
+5️⃣ Delete Last Capture – Undo?
+✅ Decision: Yes, 5-Second Undo
+
+Flow:
+
+User clicks “Delete Last”.
+
+Show small toast:
+
+“Last capture deleted. Undo?”
+
+Undo valid for 5 seconds.
+
+After 5 seconds:
+Deletion becomes permanent.
+
+Reason:
+Better UX safety without building full undo stack.
+
+6️⃣ Bottom-Right Icon – Draggable?
+✅ Decision: NOT Draggable in MVP
+
+Keep it fixed:
+
+Bottom-right
+
+20px margin
+
+Minimal size
+
+High z-index
+
+Draggable feature moved to:
+
+Phase 5 (optional enhancement)
+
+Avoid complexity early.
+
+7️⃣ Exceeding 200MB Memory Limit
+✅ Decision: Hard Block After Warning
+
+Flow:
+
+At 80%:
+
+Warning shown.
+
+At 100%:
+
+Block further captures
+
+Show message:
+
+“Memory limit reached. Please export or delete some captures.”
+
+Do NOT allow exceeding limit.
+Prevents browser crash.
+
+8️⃣ PDF Export Scaling Rules
+✅ Decision: Scale to Fit Page (Maintain Aspect Ratio)
+
+Rules:
+
+Each screenshot = new page
+
+Maintain aspect ratio
+
+Fit inside page boundaries
+
+No cropping during PDF generation
+
+If image is larger:
+Scale down proportionally.
+
+No distortion.
+No clipping.
+
+9️⃣ UI Branding Guidelines
+✅ Decision: Minimal, Neutral Design
+
+Requirements:
+
+Modern flat design
+
+Subtle shadows
+
+No loud colors
+
+Default dark theme
+
+Neutral accent (blue/indigo)
+
+Clean icon
+
+No heavy branding initially.
+Keep it professional.
+
+🔟 Backend Upload Restrictions (Phase 3)
+✅ File Restrictions
+
+Max upload size: 10MB per image
+
+Allowed types:
+
+JPG
+
+PNG
+
+WEBP
+
+Reject:
+
+GIF
+
+HEIC (unless converted)
+
+PDFs
+
+Videos
+
+Server Requirements:
+
+Validate MIME type
+
+Validate file size
+
+Rate limit requests
+
+Auto-delete after expiration
+
+1️⃣1️⃣ Dark Mode Support
+✅ Decision: YES (Default Dark Mode)
+
+Panel:
+
+Dark theme default
+
+Optional:
+
+Toggle for light mode (if time permits)
+
+Overlay:
+
+Always darkened background
+
+1️⃣2️⃣ Backend Unavailable During Upload
+✅ Decision: Graceful Failure
+
+If backend unreachable:
+
+Show message:
+
+“Upload service is currently unavailable. Please try again later.”
+
+Do NOT:
+
+Freeze UI
+
+Crash extension
+
+Retry allowed manually.
+
+1️⃣3️⃣ Localization / Multi-Language
+✅ Decision: NOT in MVP
+
+English only.
+
+Internationalization deferred to Phase 5+.
+
+1️⃣4️⃣ Extension Update Notification
+✅ Decision: No In-App Notification
+
+Chrome Web Store handles update delivery.
+
+We do NOT:
+
+Build custom update checker
+
+Notify users manually
+
+Keep simple.
+
+1️⃣5️⃣ CI/CD Code Coverage Requirements
+✅ Decision: Minimum 70% Backend Test Coverage (Phase 3+)
+
+Rules:
+
+Before merging to main (backend phase):
+
+All tests must pass
+
+Coverage ≥ 70%
+
+No lint errors
+
+Extension side:
+
+Manual testing sufficient for MVP
+
+🧠 Final UX + Behavior Summary
+Scenario	Behavior
+Start new session while active	Confirmation modal
+Browser crash	Restore session
+Delete capture	5-second undo
+Memory limit reached	Hard block
+Backend down	Graceful error
+Exceed upload size	Reject file
+PDF too large	Scale to fit
+Localization	English only
+Icon draggable	No (MVP)
+🚀 Now Your PRD is Fully Locked
+
+At this point:
+
+There is no ambiguity left about:
+
+UX behavior
+
+Technical constraints
+
+DevOps strategy
+
+Branching workflow
+
+Docker + GHCR
+
+CI/CD behavior
+
+Security rules
+
+Memory limits
+
+Failure handling
+
+Your agent now has:
+
+Clear product vision
+
+Clear boundaries
+
+Clear non-goals
+
+Clear technical stack
+
+Clear phase breakdown
+
+Clear branch workflow
+
+Clear deployment model
+
+Clear user behavior rules
+
+This is architect-level clarity.
+
+

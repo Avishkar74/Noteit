@@ -1,0 +1,35 @@
+/*
+ * WebSnap Notes – Content CSS
+ * Minimal outer styles. Main styles live in Shadow DOM (content.js).
+ * This file only handles the region overlay which lives outside shadow DOM.
+ */
+
+#wsn-root {
+  all: initial !important;
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 0 !important;
+  height: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Region Overlay (outside shadow DOM) */
+#wsn-region-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 2147483646 !important;
+  cursor: crosshair !important;
+  background: rgba(0, 0, 0, 0.3) !important;
+}
+
+#wsn-region-selection {
+  position: absolute !important;
+  border: 2px solid #818cf8 !important;
+  background: rgba(129, 140, 248, 0.1) !important;
+  pointer-events: none !important;
+}

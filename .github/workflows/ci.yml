@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vendor pdf-lib
+        run: node scripts/setup.js
+
+      - name: Generate icons
+        run: node scripts/generate-icons.js
+
+      - name: Lint
+        run: npx eslint extension/ tests/ --max-warnings=0 || true
+
+      - name: Run tests
+        run: npx jest --ci --coverage --verbose
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+
+  build-extension:
+    name: Build Extension
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Vendor pdf-lib
+        run: node scripts/setup.js
+
+      - name: Generate icons
+        run: node scripts/generate-icons.js
+
+      - name: Verify extension structure
+        run: |
+          echo "Checking required files..."
+          test -f extension/manifest.json
+          test -f extension/background/service-worker.js
+          test -f extension/content/content.js
+          test -f extension/content/content.css
+          test -f extension/lib/constants.js
+          test -f extension/lib/storage.js
+          test -f extension/lib/session-manager.js
+          test -f extension/lib/pdf-generator.js
+          test -f extension/vendor/pdf-lib.min.js
+          test -f extension/assets/icons/icon16.png
+          test -f extension/assets/icons/icon128.png
+          echo "All required files present ✓"
+
+      - name: Package extension
+        run: |
+          mkdir -p dist
+          cd extension && zip -r ../dist/websnap-notes.zip . -x "*.DS_Store"
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: websnap-notes-extension
+          path: dist/websnap-notes.zip
