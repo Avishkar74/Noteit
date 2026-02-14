@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Backend Tests: API Routes
+ * Snabby – Backend Tests: API Routes
  */
 
 const request = require('supertest');

@@ -27,7 +27,7 @@ router.post('/create', async (req, res) => {
     const qrDataUrl = await QRCode.toDataURL(uploadUrl, {
       width: 256,
       margin: 2,
-      color: { dark: '#818cf8', light: '#1e1e2e' },
+      color: { dark: '#ffffff', light: '#0F0F0F' },
     });
 
     res.json({
@@ -52,6 +52,25 @@ router.get('/:id', (req, res) => {
   res.json({
     imageCount: session.images.length,
     createdAt: session.createdAt,
+  });
+});
+
+// Get a specific uploaded image by index
+router.get('/:id/images/:index', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found or expired.' });
+  }
+
+  const index = parseInt(req.params.index, 10);
+  if (isNaN(index) || index < 0 || index >= session.images.length) {
+    return res.status(404).json({ error: 'Image not found.' });
+  }
+
+  res.json({
+    dataUrl: session.images[index].data,
+    addedAt: session.images[index].addedAt,
+    index,
   });
 });
 

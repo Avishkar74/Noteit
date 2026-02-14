@@ -15,6 +15,105 @@ importScripts('../lib/pdf-generator.js');
 
 const MSG = WSN_CONSTANTS.MSG;
 
+// ─── QR Upload Session State ────────────────────────
+let uploadSession = null;   // { sessionId, token, qrCode, uploadUrl, pollTimer }
+
+function getBackendUrl() {
+  return WSN_CONSTANTS.BACKEND_URL;
+}
+
+async function createUploadSession() {
+  const backendUrl = getBackendUrl();
+  try {
+    const res = await fetch(`${backendUrl}/api/session/create`, { method: 'POST' });
+    if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+    const data = await res.json();
+    return data; // { sessionId, token, uploadUrl, qrCode }
+  } catch (err) {
+    console.error('WebSnap: Failed to create upload session', err);
+    return { error: err.message };
+  }
+}
+
+async function pollForImages(sessionId, lastCount) {
+  const backendUrl = getBackendUrl();
+  try {
+    const res = await fetch(`${backendUrl}/api/session/${sessionId}`);
+    if (!res.ok) return { imageCount: lastCount };
+    const data = await res.json();
+    return data; // { imageCount, createdAt }
+  } catch {
+    return { imageCount: lastCount };
+  }
+}
+
+async function fetchUploadedImage(sessionId, imageIndex) {
+  const backendUrl = getBackendUrl();
+  try {
+    const res = await fetch(`${backendUrl}/api/session/${sessionId}/images/${imageIndex}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.dataUrl || null;
+  } catch {
+    return null;
+  }
+}
+
+function startPolling(tabId) {
+  if (!uploadSession) return;
+  
+  // Poll every 2 seconds
+  uploadSession.pollTimer = setInterval(async () => {
+    if (!uploadSession) {
+      clearInterval(uploadSession?.pollTimer);
+      return;
+    }
+
+    const info = await pollForImages(uploadSession.sessionId, uploadSession.lastImageCount || 0);
+    
+    if (info.imageCount > (uploadSession.lastImageCount || 0)) {
+      // New images available — fetch and store them
+      for (let i = (uploadSession.lastImageCount || 0); i < info.imageCount; i++) {
+        const dataUrl = await fetchUploadedImage(uploadSession.sessionId, i);
+        if (dataUrl) {
+          const result = await SessionManager.addScreenshot(dataUrl, {
+            url: 'phone-upload',
+            tabTitle: 'Phone Upload',
+          });
+
+          if (result.success && tabId) {
+            sendToTab(tabId, {
+              type: MSG.PHONE_IMAGE_RECEIVED,
+              count: result.count,
+            });
+          }
+        }
+      }
+      uploadSession.lastImageCount = info.imageCount;
+    }
+  }, 2000);
+}
+
+function stopPolling() {
+  if (uploadSession && uploadSession.pollTimer) {
+    clearInterval(uploadSession.pollTimer);
+    uploadSession.pollTimer = null;
+  }
+}
+
+async function closeUploadSession() {
+  if (!uploadSession) return;
+  stopPolling();
+  
+  const backendUrl = getBackendUrl();
+  try {
+    await fetch(`${backendUrl}/api/session/${uploadSession.sessionId}`, { method: 'DELETE' });
+  } catch {
+    // best effort
+  }
+  uploadSession = null;
+}
+
 // ─── Extension Icon Click (Activation Toggle) ───────
 
 chrome.action.onClicked.addListener(async (tab) => {
@@ -67,7 +166,7 @@ chrome.commands.onCommand.addListener(async (command) => {
         imageData: dataUrl,
       });
     } catch (err) {
-      console.error('WebSnap: Capture failed', err);
+      console.error('Snabby: Capture failed', err);
       sendToTab(tab.id, {
         type: MSG.SHOW_TOAST,
         message: 'Screenshot capture failed.',
@@ -101,7 +200,7 @@ chrome.commands.onCommand.addListener(async (command) => {
         warning: result.warning,
       });
     } catch (err) {
-      console.error('WebSnap: Capture failed', err);
+      console.error('Snabby: Capture failed', err);
       sendToTab(tab.id, {
         type: MSG.SHOW_TOAST,
         message: 'Screenshot capture failed.',
@@ -117,7 +216,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   handleMessage(request, sender)
     .then(sendResponse)
     .catch(err => {
-      console.error('WebSnap: Message handler error', err);
+      console.error('Snabby: Message handler error', err);
       sendResponse({ error: err.message });
     });
   return true; // Keep message channel open for async response
@@ -204,9 +303,45 @@ async function handleMessage(request, sender) {
       await SessionManager.clearSessionData();
       return { success: true };
     } catch (err) {
-      console.error('WebSnap: PDF export failed', err);
+      console.error('Snabby: PDF export failed', err);
       return { error: 'EXPORT_FAILED', message: 'PDF export failed. Please try again.' };
     }
+  }
+
+  case MSG.CREATE_UPLOAD_SESSION: {
+    // Close existing upload session if any
+    await closeUploadSession();
+
+    const data = await createUploadSession();
+    if (data.error) {
+      return { error: data.error, message: 'Failed to connect to backend server. Make sure it is running.' };
+    }
+
+    uploadSession = {
+      sessionId: data.sessionId,
+      token: data.token,
+      qrCode: data.qrCode,
+      uploadUrl: data.uploadUrl,
+      lastImageCount: 0,
+      pollTimer: null,
+    };
+
+    // Start polling for new images
+    if (tabId) {
+      startPolling(tabId);
+    }
+
+    return {
+      success: true,
+      qrCode: data.qrCode,
+      uploadUrl: data.uploadUrl,
+      sessionId: data.sessionId,
+    };
+  }
+
+  case MSG.CLOSE_UPLOAD_SESSION: {
+    await closeUploadSession();
+    return { success: true };
   }
 
   default:

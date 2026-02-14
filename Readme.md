@@ -20,9 +20,9 @@ WebSnap Notes is a Chromium browser extension that captures visible or selected 
 | Session restore on browser restart | ✅ Phase 1 |
 | Region selection (drag-to-crop) | ✅ Phase 2 |
 | Dark theme UI with Shadow DOM isolation | ✅ Phase 2 |
-| QR-based phone upload | 🔜 Phase 3 |
-| Backend (Node.js + Socket.io) | 🔜 Phase 3 |
-| Docker + GHCR publishing | 🔜 Phase 4 |
+| QR-based phone upload | ✅ Phase 3 |
+| Backend (Node.js + Socket.io) | ✅ Phase 3 |
+| Docker + GHCR publishing | ✅ Phase 4 |
 | CI/CD (GitHub Actions) | ✅ Phase 4 |
 
 ---
@@ -109,6 +109,57 @@ NoteIt/
 
 ---
 
+## Phone Upload (QR Code)
+
+### Quick Start
+
+1. **Start the backend server:**
+   ```bash
+   cd backend
+   npm install
+   npm run dev:local    # Configured for local network access
+   ```
+
+2. **In the extension panel, click "Upload" button**
+3. **Scan the QR code with your phone** (ensure phone is on same Wi-Fi)
+4. **Take/select photos** → they appear instantly in your session
+
+### How It Works
+
+- Backend creates a temporary upload session (30-min expiry)
+- QR code encodes the upload URL with your laptop's local IP
+- Extension polls the backend every 2 seconds for new uploads
+- Uploaded images are automatically added to your active session
+
+### Configuration
+
+The backend URL is configured in:
+- **Extension:** `extension/lib/constants.js` → `BACKEND_URL`
+- **Docker:** `docker/docker-compose.yml` → `BASE_URL` environment variable
+- **Dev script:** `backend/package.json` → `dev:local` script
+
+**Current IP:** `http://100.128.160.161:3000`
+
+**To update IP:** If your IP changes, update all three locations above.
+
+### Docker Compose
+
+```bash
+cd docker
+docker-compose up
+```
+
+Exposes backend on `http://100.128.160.161:3000`
+
+### Troubleshooting
+
+- **QR code doesn't work:** Ensure phone and laptop are on the same Wi-Fi network
+- **"Connection failed" error:** Check if backend is running (`npm run dev:local`)
+- **Firewall blocking:** Allow incoming connections on port 3000
+- **IP changed:** Run `ipconfig`, update `BACKEND_URL` and `BASE_URL` with new IP
+
+---
+
 ## Running Tests
 
 ```bash
@@ -120,29 +171,16 @@ npm run test:coverage
 
 # Watch mode
 npm run test:watch
-```
 
-**Current coverage:** 75 tests across 4 suites (storage, session-manager, pdf-generator, integration).
-
----
-
-## Backend Setup (Phase 3)
-
-The backend provides QR-based phone upload functionality:
-
-```bash
+# Backend tests
 cd backend
-npm install
-npm start     # Starts on port 3000
+npm test
 ```
 
-### Docker
-
-```bash
-cd docker
-docker build -t websnap-backend .
-docker run -p 3000:3000 websnap-backend
-```
+**Test coverage:**
+- **Extension:** 115 tests across 5 suites
+- **Backend:** 51 tests across 4 suites
+- **Total:** 166 tests, all passing ✅
 
 ---
 

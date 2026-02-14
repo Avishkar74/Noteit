@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "dev:local": "set BASE_URL=http://100.128.160.161:3000&& node --watch src/index.js",
+    "tunnel": "npx -y localtunnel --port 3000",
     "test": "jest --verbose",
     "test:coverage": "jest --coverage"
   },

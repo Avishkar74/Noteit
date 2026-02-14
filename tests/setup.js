@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Test Setup
+ * Snabby – Test Setup
  * Mock Chrome extension APIs for Jest testing environment.
  */
 

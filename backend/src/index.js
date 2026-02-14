@@ -93,8 +93,11 @@ process.on('SIGINT', shutdown);
 
 // Start server (only if not in test mode)
 if (process.env.NODE_ENV !== 'test') {
-  server.listen(PORT, () => {
+  server.listen(PORT, '0.0.0.0', () => {
+    const baseUrl = process.env.BASE_URL || `http://localhost:${PORT}`;
     console.log(`WebSnap backend running on port ${PORT}`);
+    console.log(`Upload URL: ${baseUrl}`);
+    console.log(`Access from phone: Ensure devices are on same Wi-Fi network`);
   });
 }
 

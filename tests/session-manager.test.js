@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Session Manager Tests
+ * Snabby – Session Manager Tests
  */
 
 const WSN_CONSTANTS = require('../extension/lib/constants');

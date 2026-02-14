@@ -14,6 +14,9 @@ const WSN_CONSTANTS = {
   MEMORY_LIMIT: 200 * 1024 * 1024, // 200 MB
   MEMORY_WARNING_THRESHOLD: 0.8,    // 80%
 
+  // Backend URL (configurable via environment / storage)
+  BACKEND_URL: 'http://100.128.160.161:3000',
+
   // Session statuses
   STATUS: {
     IDLE: 'idle',
@@ -34,6 +37,7 @@ const WSN_CONSTANTS = {
     SETTINGS: 'wsn_settings',
     SCREENSHOT_PREFIX: 'wsn_screenshot_',
     UNDO_BUFFER: 'wsn_undo_buffer',
+    BACKEND_URL: 'wsn_backend_url',
   },
 
   // Message types (background <-> content)
@@ -51,6 +55,11 @@ const WSN_CONSTANTS = {
     GET_ALL_THUMBNAILS: 'GET_ALL_THUMBNAILS',
     SAVE_REGION_CAPTURE: 'SAVE_REGION_CAPTURE',
     CONFIRM_OVERWRITE: 'CONFIRM_OVERWRITE',
+
+    // QR / Phone Upload
+    CREATE_UPLOAD_SESSION: 'CREATE_UPLOAD_SESSION',
+    CLOSE_UPLOAD_SESSION: 'CLOSE_UPLOAD_SESSION',
+    PHONE_IMAGE_RECEIVED: 'PHONE_IMAGE_RECEIVED',
 
     // Background → Content
     CAPTURE_COMPLETE: 'CAPTURE_COMPLETE',

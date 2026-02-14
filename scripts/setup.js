@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Setup Script
+ * Snabby – Setup Script
  * Copies vendored dependencies into extension directory.
  */
 

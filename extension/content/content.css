@@ -29,7 +29,7 @@
 
 #wsn-region-selection {
   position: absolute !important;
-  border: 2px solid #818cf8 !important;
-  background: rgba(129, 140, 248, 0.1) !important;
+  border: 2px solid #fff !important;
+  background: rgba(255, 255, 255, 0.1) !important;
   pointer-events: none !important;
 }

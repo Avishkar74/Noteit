@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – PDF Generator Tests
+ * Snabby – PDF Generator Tests
  */
 
 const WSN_CONSTANTS = require('../extension/lib/constants');

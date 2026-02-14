@@ -1,5 +1,5 @@
 /**
- * Generate PNG icons for the WebSnap Notes extension.
+ * Generate PNG icons for the Snabby extension.
  * Creates 16x16, 32x32, 48x48, and 128x128 icons.
  * Uses raw PNG binary construction (no external deps).
  */

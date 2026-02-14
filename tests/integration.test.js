@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Integration Tests
+ * Snabby – Integration Tests
  * Tests the full flow: session lifecycle, capture, export.
  */
 

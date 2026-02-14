@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Content Script
+ * Snabby – Content Script
  * Injects: floating icon, side panel, region selector, toast notifications.
  * Uses Shadow DOM for CSS isolation.
  */
@@ -66,6 +66,9 @@
     GET_ALL_THUMBNAILS: 'GET_ALL_THUMBNAILS',
     SAVE_REGION_CAPTURE: 'SAVE_REGION_CAPTURE',
     CONFIRM_OVERWRITE: 'CONFIRM_OVERWRITE',
+    CREATE_UPLOAD_SESSION: 'CREATE_UPLOAD_SESSION',
+    CLOSE_UPLOAD_SESSION: 'CLOSE_UPLOAD_SESSION',
+    PHONE_IMAGE_RECEIVED: 'PHONE_IMAGE_RECEIVED',
     CAPTURE_COMPLETE: 'CAPTURE_COMPLETE',
     START_REGION_SELECT: 'START_REGION_SELECT',
     SESSION_UPDATED: 'SESSION_UPDATED',
@@ -80,7 +83,6 @@
   let panelOpen = false;
   let currentSession = null;
   let currentSettings = null;
-  let undoTimer = null;
 
   // ─── Shadow DOM Host ──────────────────────────
   const host = document.createElement('div');
@@ -110,17 +112,87 @@
   let regionImageData = null;
 
   // ═══════════════════════════════════════════════
-  //  FLOATING ICON
+  //  FLOATING ICON (draggable)
   // ═══════════════════════════════════════════════
 
   function createFloatingIcon() {
-    const el = document.createElement('div');
-    el.className = 'wsn-floating-icon';
-    el.innerHTML = '📸';
-    el.title = 'WebSnap Notes - Click to open';
-    el.style.display = 'none';
-    el.addEventListener('click', togglePanel);
-    return el;
+    const icon = document.createElement('div');
+    icon.className = 'wsn-floating-icon';
+    icon.innerHTML = `
+      <div class="wsn-face">
+        <div class="wsn-eye wsn-eye--left"><div class="wsn-pupil"></div></div>
+        <div class="wsn-eye wsn-eye--right"><div class="wsn-pupil"></div></div>
+      </div>
+    `;
+    icon.title = 'Snabby';
+    icon.style.display = 'none';
+
+    // ─── Drag support ───
+    let isDragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let iconStartX = 0, iconStartY = 0;
+    let hasMoved = false;
+
+    icon.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      isDragging = true;
+      hasMoved = false;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      const rect = icon.getBoundingClientRect();
+      iconStartX = rect.left;
+      iconStartY = rect.top;
+      icon.style.transition = 'none';
+    });
+
+    const onMouseMove = (e) => {
+      // Eye tracking – always active
+      updatePupils(e.clientX, e.clientY);
+
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
+      if (!hasMoved) return;
+      let newX = iconStartX + dx;
+      let newY = iconStartY + dy;
+      // Clamp to viewport
+      newX = Math.max(0, Math.min(window.innerWidth - 48, newX));
+      newY = Math.max(0, Math.min(window.innerHeight - 48, newY));
+      icon.style.right = 'auto';
+      icon.style.bottom = 'auto';
+      icon.style.left = newX + 'px';
+      icon.style.top = newY + 'px';
+    };
+
+    const onMouseUp = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      icon.style.transition = '';
+      if (!hasMoved) togglePanel();
+    };
+
+    // Attach to document so drag works outside the icon
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    return icon;
+  }
+
+  function updatePupils(mouseX, mouseY) {
+    const pupils = shadow.querySelectorAll('.wsn-pupil');
+    pupils.forEach(pupil => {
+      const eye = pupil.parentElement;
+      const rect = eye.getBoundingClientRect();
+      if (rect.width === 0) return; // icon hidden
+      const eyeX = rect.left + rect.width / 2;
+      const eyeY = rect.top + rect.height / 2;
+      const angle = Math.atan2(mouseY - eyeY, mouseX - eyeX);
+      const maxDist = 2.5;
+      const px = Math.cos(angle) * maxDist;
+      const py = Math.sin(angle) * maxDist;
+      pupil.style.transform = `translate(calc(-50% + ${px}px), calc(-50% + ${py}px))`;
+    });
   }
 
   function showFloatingIcon() {
@@ -143,6 +215,7 @@
   }
 
   function createBackdrop() {
+    // Invisible click-catcher (no blur, no tint)
     const el = document.createElement('div');
     el.className = 'wsn-backdrop';
     el.style.display = 'none';
@@ -168,14 +241,12 @@
     
     // Trigger animations
     requestAnimationFrame(() => {
-      backdrop.classList.add('wsn-visible');
       panel.classList.add('wsn-panel--open');
     });
   }
 
   function closePanel() {
     panelOpen = false;
-    backdrop.classList.remove('wsn-visible');
     panel.classList.remove('wsn-panel--open');
     
     // Hide after animation completes
@@ -197,11 +268,13 @@
     // Header
     const header = el('div', 'wsn-panel__header');
     header.innerHTML = `
-      <div class="wsn-header-icon">WS</div>
-      <div class="wsn-header-content">
-        <div class="wsn-panel__title">WebSnap Notes</div>
-        <div class="wsn-header-version">v1.0.0</div>
+      <div class="wsn-header-icon">
+        <div class="wsn-header-face">
+          <div class="wsn-header-eye"></div>
+          <div class="wsn-header-eye"></div>
+        </div>
       </div>
+      <span class="wsn-panel__title">Snabby</span>
       <button class="wsn-panel__close" title="Close">&times;</button>
     `;
     header.querySelector('.wsn-panel__close').addEventListener('click', closePanel);
@@ -258,10 +331,10 @@
       }
 
       if (result.success) {
-        showToast(`Session "${name}" started!`, 'success');
+        // Session started silently
         await refreshPanelContent();
       } else {
-        showToast(result.message || 'Failed to start session.', 'error');
+        // Session start failed silently
         btn.disabled = false;
         btn.textContent = 'Start Capture Session';
       }
@@ -297,7 +370,7 @@
       const result = await sendMessage({ type: MSG.CONFIRM_OVERWRITE, name: newName });
       overlay.remove();
       if (result.success) {
-        showToast(`Session "${newName}" started!`, 'success');
+        // Session overwritten silently
       }
       await refreshPanelContent();
     });
@@ -310,55 +383,54 @@
   async function renderActiveView() {
     const session = currentSession;
     const settings = currentSettings;
-    const isPaused = session.status === 'paused';
 
     const view = el('div', 'wsn-panel__body');
 
-    // Status dot and text
-    const statusText = isPaused ? 'Paused' : 'Active';
-
     view.innerHTML = `
-      <div class="wsn-session-info">
-        <div class="wsn-session-name">${escapeHtml(session.name)}</div>
-        <div class="wsn-session-meta">
-          <div class="wsn-status-dot"></div>
-          ${statusText} • ${session.screenshotCount} capture${session.screenshotCount !== 1 ? 's' : ''}
+      <!-- Static top section -->
+      <div class="wsn-static-top">
+        <div class="wsn-session-bar">
+          <div class="wsn-session-bar__info">
+            <div class="wsn-session-bar__name">${escapeHtml(session.name)}</div>
+            <div class="wsn-session-bar__count">${session.screenshotCount} captured</div>
+          </div>
+          <button class="wsn-session-bar__delete" data-action="end-session" title="End session">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
         </div>
-      </div>
 
-      <div class="wsn-label">Capture Mode</div>
-      
-      <div class="wsn-toggle-group">
-        <button class="wsn-toggle ${settings.captureMode === 'visible' ? 'wsn-toggle--active' : ''}" data-mode="visible">Full Page</button>
-        <button class="wsn-toggle ${settings.captureMode === 'region' ? 'wsn-toggle--active' : ''}" data-mode="region">Region</button>
-      </div>
-
-      <div class="wsn-controls">
-        ${isPaused
-    ? '<button class="wsn-btn--pause">▶ Resume Session</button>'
-    : '<button class="wsn-btn--pause">⏸ Pause Session</button>'}
-        <button class="wsn-btn--delete" data-action="delete-last" ${session.screenshotCount === 0 ? 'disabled' : ''}>🗑 Delete Last Capture</button>
-      </div>
-
-      <div class="wsn-preview-container">
-        <div class="wsn-label">Captured Screenshots</div>
-        <div class="wsn-preview-grid" id="wsn-preview-grid">
-          <div class="wsn-preview-empty">
-            <div class="wsn-preview-empty-icon">📸</div>
-            <div class="wsn-preview-empty-text">No captures yet<br>Press Alt+Shift+S or use the floating icon</div>
+        <div class="wsn-controls-bar">
+          <button class="wsn-btn--phone" title="Upload from Phone">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+            Upload
+          </button>
+          <div class="wsn-toggle-group">
+            <button class="wsn-toggle ${settings.captureMode === 'visible' ? 'wsn-toggle--active' : ''}" data-mode="visible" title="Full Screen">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+            </button>
+            <button class="wsn-toggle ${settings.captureMode === 'region' ? 'wsn-toggle--active' : ''}" data-mode="region" title="Crop Region">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/><path d="M1 6.13L16 6a2 2 0 0 1 2 2v15"/></svg>
+            </button>
           </div>
         </div>
       </div>
 
-      <div class="wsn-phone-section">
-        <button class="wsn-btn--phone">
-          📱 Upload from Phone
-        </button>
+      <!-- Scrollable screenshots -->
+      <div class="wsn-scroll-area" id="wsn-scroll-area">
+        <div class="wsn-preview-grid" id="wsn-preview-grid">
+          <div class="wsn-preview-empty">
+            <div class="wsn-preview-empty-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </div>
+            <div class="wsn-preview-empty-text">No captures yet</div>
+            <div class="wsn-preview-empty-hint">Ctrl + Shift + S</div>
+          </div>
+        </div>
       </div>
 
-      <div class="wsn-export-section">
-        <button class="wsn-btn--primary" data-action="export" ${session.screenshotCount === 0 ? 'disabled' : ''}>📄 Export PDF Report</button>
-        <button class="wsn-btn--end" data-action="end-session">End Session</button>
+      <!-- Static footer -->
+      <div class="wsn-footer">
+        <button class="wsn-btn--download" data-action="export" ${session.screenshotCount === 0 ? 'disabled' : ''}>Download PDF</button>
       </div>
     `;
 
@@ -373,64 +445,112 @@
       });
     });
 
-    // Controls
-    const pauseResumeBtn = view.querySelector('.wsn-btn--pause');
-    pauseResumeBtn.addEventListener('click', async () => {
-      if (isPaused) {
-        await sendMessage({ type: MSG.RESUME_SESSION });
-        showToast('Session resumed!', 'success');
-      } else {
-        await sendMessage({ type: MSG.PAUSE_SESSION });
-        showToast('Session paused.', 'info');
-      }
-      await refreshPanelContent();
-    });
-
-    view.querySelector('[data-action="delete-last"]')?.addEventListener('click', async () => {
-      const result = await sendMessage({ type: MSG.DELETE_LAST });
-      if (result.success) {
-        showUndoToast();
-        await refreshPanelContent();
-      } else {
-        showToast(result.message || 'Nothing to delete.', 'error');
-      }
-    });
-
-    view.querySelector('[data-action="export"]')?.addEventListener('click', async () => {
-      const btn = view.querySelector('[data-action="export"]');
-      btn.disabled = true;
-      btn.textContent = '⏳ Generating PDF...';
-
-      const result = await sendMessage({ type: MSG.EXPORT_PDF });
-      if (result.success) {
-        showToast('PDF exported successfully!', 'success');
-        await refreshPanelContent();
-      } else {
-        showToast(result.message || 'Export failed.', 'error');
-        btn.disabled = false;
-        btn.textContent = '📄 Export PDF Report';
-      }
-    });
-
+    // End session
     view.querySelector('[data-action="end-session"]')?.addEventListener('click', async () => {
       if (session.screenshotCount > 0) {
         const confirmed = confirm('End session? Unsaved captures will be lost.');
         if (!confirmed) return;
       }
       await sendMessage({ type: MSG.END_SESSION });
-      showToast('Session ended.', 'info');
+      // Session ended silently
       await refreshPanelContent();
     });
 
-    // Phone upload handler
+    // Export
+    view.querySelector('[data-action="export"]')?.addEventListener('click', async () => {
+      const btn = view.querySelector('[data-action="export"]');
+      btn.disabled = true;
+      btn.textContent = 'Generating...';
+
+      const result = await sendMessage({ type: MSG.EXPORT_PDF });
+      if (result.success) {
+        // PDF exported silently
+        await refreshPanelContent();
+      } else {
+        // Export failed silently
+        btn.disabled = false;
+        btn.textContent = 'Download PDF';
+      }
+    });
+
+    // Phone upload
     view.querySelector('.wsn-btn--phone')?.addEventListener('click', async () => {
-      showToast('QR code feature coming soon!', 'info');
+      await showQrUploadModal();
     });
 
     panel.appendChild(view);
 
     // Load thumbnails
     loadThumbnails();
+  }
+
+  // ─── QR Upload Modal ──────────────────────
+
+  let qrKeepAlivePort = null;
+
+  async function showQrUploadModal() {
+    const overlay = el('div', 'wsn-modal-overlay');
+    overlay.innerHTML = `
+      <div class="wsn-modal wsn-qr-modal">
+        <div class="wsn-modal__title">Upload from Phone</div>
+        <p class="wsn-modal__text">Scan this QR code with your phone to upload photos directly to this session.</p>
+        <div class="wsn-qr-loading">
+          <div class="wsn-spinner"></div>
+          <span>Connecting to server...</span>
+        </div>
+        <div class="wsn-qr-content" style="display:none;">
+          <img class="wsn-qr-image" alt="QR Code" />
+          <div class="wsn-qr-status">Waiting for uploads...</div>
+        </div>
+        <div class="wsn-qr-error" style="display:none;">
+          <div class="wsn-qr-error-text"></div>
+        </div>
+        <div class="wsn-modal__actions">
+          <button class="wsn-btn--secondary" data-action="close-qr">Close</button>
+        </div>
+      </div>
+    `;
+
+    const closeBtn = overlay.querySelector('[data-action="close-qr"]');
+    closeBtn.addEventListener('click', async () => {
+      await sendMessage({ type: MSG.CLOSE_UPLOAD_SESSION });
+      if (qrKeepAlivePort) {
+        qrKeepAlivePort.disconnect();
+        qrKeepAlivePort = null;
+      }
+      overlay.remove();
+    });
+
+    panel.appendChild(overlay);
+
+    // Open keep-alive port so the service worker stays awake for polling
+    try {
+      qrKeepAlivePort = chrome.runtime.connect({ name: 'qr-upload-keepalive' });
+      qrKeepAlivePort.onDisconnect.addListener(() => { qrKeepAlivePort = null; });
+    } catch (_) {
+      // If context is dead, port will fail — that's fine
+    }
+
+    // Request QR from backend via service worker
+    const result = await sendMessage({ type: MSG.CREATE_UPLOAD_SESSION });
+
+    const loading = overlay.querySelector('.wsn-qr-loading');
+    const content = overlay.querySelector('.wsn-qr-content');
+    const errorEl = overlay.querySelector('.wsn-qr-error');
+
+    if (result.error) {
+      loading.style.display = 'none';
+      errorEl.style.display = 'block';
+      errorEl.querySelector('.wsn-qr-error-text').textContent =
+        result.message || 'Failed to connect to server. Make sure the backend is running.';
+      return;
+    }
+
+    if (result.success && result.qrCode) {
+      loading.style.display = 'none';
+      content.style.display = 'flex';
+      content.querySelector('.wsn-qr-image').src = result.qrCode;
+    }
   }
 
   async function loadThumbnails() {
@@ -443,8 +563,11 @@
     if (thumbnails.length === 0) {
       grid.innerHTML = `
         <div class="wsn-preview-empty">
-          <div class="wsn-preview-empty-icon">📸</div>
-          <div class="wsn-preview-empty-text">No captures yet<br>Press Alt+Shift+S or use the floating icon</div>
+          <div class="wsn-preview-empty-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <div class="wsn-preview-empty-text">No captures yet</div>
+          <div class="wsn-preview-empty-hint">Ctrl + Shift + S</div>
         </div>
       `;
       return;
@@ -468,7 +591,7 @@
         if (confirmed) {
           const result = await sendMessage({ type: MSG.DELETE_CAPTURE, index: idx });
           if (result.success) {
-            showToast('Capture deleted', 'info');
+            // Capture deleted silently
             await refreshPanelContent();
           }
         }
@@ -477,11 +600,19 @@
       // Click to view (optional enhancement)
       thumbEl.addEventListener('click', () => {
         // Could add fullscreen preview in future
-        showToast(`Capture #${idx + 1}: ${thumb.tabTitle || 'Untitled'}`, 'info');
+        // (removed toast notification)
       });
 
       grid.appendChild(thumbEl);
     });
+
+    // Auto-scroll to last capture
+    const scrollArea = shadow.getElementById('wsn-scroll-area');
+    if (scrollArea) {
+      requestAnimationFrame(() => {
+        scrollArea.scrollTop = scrollArea.scrollHeight;
+      });
+    }
   }
 
   // ═══════════════════════════════════════════════
@@ -643,37 +774,6 @@
     }, duration);
   }
 
-  function showUndoToast() {
-    // Clear previous undo timer
-    if (undoTimer) clearTimeout(undoTimer);
-
-    const toast = el('div', 'wsn-toast wsn-toast--info wsn-toast--undo');
-    toast.innerHTML = `
-      <span>Last capture deleted.</span>
-      <button class="wsn-btn wsn-btn--small wsn-btn--ghost wsn-undo-btn">Undo</button>
-    `;
-
-    toast.querySelector('.wsn-undo-btn').addEventListener('click', async () => {
-      const result = await sendMessage({ type: MSG.UNDO_DELETE });
-      if (result.success) {
-        showToast('Capture restored!', 'success');
-        if (panelOpen) await refreshPanelContent();
-      } else {
-        showToast(result.message || 'Undo failed.', 'error');
-      }
-      toast.remove();
-    });
-
-    toastContainer.appendChild(toast);
-    requestAnimationFrame(() => toast.classList.add('wsn-toast--visible'));
-
-    undoTimer = setTimeout(() => {
-      toast.classList.remove('wsn-toast--visible');
-      setTimeout(() => toast.remove(), 300);
-      undoTimer = null;
-    }, 5000);
-  }
-
   // ═══════════════════════════════════════════════
   //  MESSAGE PASSING
   // ═══════════════════════════════════════════════
@@ -719,16 +819,26 @@
 
       case MSG.SESSION_RESTORED:
         currentSession = message.session;
-        showToast('Previous session restored.', 'info');
+        // Session restored silently
         if (panelOpen) refreshPanelContent();
         break;
 
       case MSG.CAPTURE_COMPLETE:
-        showToast(`Screenshot #${message.count} captured!`, 'success', 1500);
+        // Screenshot captured silently
         if (message.warning === 'MEMORY_WARNING') {
-          setTimeout(() => showToast('⚠ Memory usage above 80%. Consider exporting.', 'warning', 4000), 1800);
+          // Memory warning also silent
         }
         if (panelOpen) refreshPanelContent();
+        break;
+
+      case MSG.PHONE_IMAGE_RECEIVED:
+        // Phone upload received silently
+        if (panelOpen) {
+          // Update QR status text if visible
+          const qrStatus = shadow.querySelector('.wsn-qr-status');
+          if (qrStatus) qrStatus.textContent = `${message.count} image(s) received`;
+          refreshPanelContent();
+        }
         break;
 
       case MSG.START_REGION_SELECT:
@@ -757,8 +867,7 @@
         showFloatingIcon();
 
         if (currentSession && currentSession.status !== 'idle') {
-          // Session was active – show subtle restore indicator
-          showToast('Previous session restored.', 'info', 2000);
+          // Session was active – restored silently
         }
       }
     } catch {
@@ -790,64 +899,89 @@
 
   function getStyles() {
     return `
-      /* ─── Reset & Base ─── */
+      /* ─── Reset ─── */
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-      /* ─── Floating Icon ─── */
+      /* ─── Floating Icon (Mascot) ─── */
       .wsn-floating-icon {
         position: fixed;
-        bottom: 20px;
-        right: 20px;
-        width: 44px;
-        height: 44px;
-        background: #0B0B0B;
-        border: 1px solid #333;
-        border-radius: 12px;
+        bottom: 24px;
+        right: 24px;
+        width: 48px;
+        height: 48px;
+        background: transparent;
+        border: none;
+        border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        cursor: pointer;
+        cursor: grab;
         pointer-events: auto;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.6);
-        transition: all 150ms ease;
         z-index: 2147483647;
-        color: white;
-        font-size: 18px;
+        user-select: none;
+        opacity: 0.3;
+        transition: opacity 400ms ease, transform 150ms ease;
       }
       .wsn-floating-icon:hover {
-        transform: scale(1.05);
-        box-shadow: 0 6px 20px rgba(0,0,0,0.8);
-        border-color: #555;
-      }
-      .wsn-floating-icon:active { transform: scale(0.95); }
-
-      /* ─── Backdrop Blur ─── */
-      .wsn-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: rgba(0, 0, 0, 0.1);
-        backdrop-filter: blur(2px);
-        z-index: 2147483646;
-        opacity: 0;
-        transition: opacity 200ms ease-in-out;
-        pointer-events: none;
-      }
-      .wsn-backdrop.wsn-visible {
         opacity: 1;
       }
+      .wsn-floating-icon:active { cursor: grabbing; }
 
-      /* ─── Panel Container ─── */
+      /* Mascot Face */
+      .wsn-face {
+        width: 44px;
+        height: 44px;
+        background: #000;
+        border-radius: 50%;
+        position: relative;
+        border: 1.5px solid #3a3a3a;
+        box-shadow: 0 4.4px 9.2px rgba(0,0,0,0.25);
+      }
+      .wsn-floating-icon:hover .wsn-face {
+        border-color: #4a4a4a;
+        box-shadow: 0 6px 12px rgba(0,0,0,0.3);
+      }
+      .wsn-eye {
+        width: 8px;     /* 18% of face - slightly smaller */
+        height: 9px;    /* 20% of face - slightly taller for vertical oval */
+        background: white;
+        border-radius: 50%;
+        position: absolute;
+        top: 14.5px;    /* 33% from top - higher for alert look */
+        overflow: hidden;
+      }
+      .wsn-eye--left { left: calc(50% - 8px - 1.5px); }  /* 3px gap - tighter spacing */
+      .wsn-eye--right { left: calc(50% + 1.5px); }       /* 3px gap - tighter spacing */
+      .wsn-pupil {
+        width: 3px;     /* 37.5% of eye - slightly smaller */
+        height: 3px;
+        background: #000;
+        border-radius: 50%;
+        position: absolute;
+        top: 48%;       /* Slightly higher in eyeball */
+        left: 48%;      /* Slightly inward */
+        transform: translate(-50%, -50%);
+        transition: transform 0.06s linear;
+      }
+
+      /* ─── Backdrop (click-catcher, no blur) ─── */
+      .wsn-backdrop {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        z-index: 2147483646;
+        pointer-events: auto;
+        background: transparent;
+      }
+
+      /* ─── Panel ─── */
       .wsn-panel {
         position: fixed;
         top: 0;
         right: -420px;
         width: 400px;
         height: 100vh;
-        background: #0B0B0B;
-        border-left: 1px solid #333;
+        background: #0F0F0F;
+        border-left: 1px solid #222;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         font-size: 14px;
         line-height: 1.4;
@@ -855,220 +989,202 @@
         display: flex;
         flex-direction: column;
         z-index: 2147483647;
-        box-shadow: -8px 0 32px rgba(0, 0, 0, 0.6);
+        box-shadow: -8px 0 40px rgba(0,0,0,0.5);
         transition: right 200ms ease-in-out;
         overflow: hidden;
         pointer-events: auto;
       }
-      .wsn-panel.wsn-panel--open {
-        right: 0;
-      }
+      .wsn-panel.wsn-panel--open { right: 0; }
 
       /* ─── Header ─── */
       .wsn-panel__header {
         display: flex;
         align-items: center;
-        padding: 20px;
-        border-bottom: 1px solid #333;
-        gap: 12px;
+        padding: 16px 20px;
+        border-bottom: 1px solid #222;
+        gap: 10px;
         flex-shrink: 0;
       }
       .wsn-header-icon {
-        width: 24px;
-        height: 24px;
-        background: white;
-        border-radius: 6px;
+        width: 28px;
+        height: 28px;
+        background: transparent;
+        border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 14px;
-        color: black;
-        font-weight: 600;
+        flex-shrink: 0;
       }
-      .wsn-header-content {
-        flex: 1;
+      .wsn-header-face {
+        width: 24px;
+        height: 24px;
+        background: #000;
+        border-radius: 50%;
+        position: relative;
+        border: 1px solid #3a3a3a;
+        box-shadow: 0 2.4px 5px rgba(0,0,0,0.25);
       }
+      .wsn-header-eye {
+        width: 4.3px;   /* 18% of face - slightly smaller */
+        height: 4.8px;  /* 20% of face - slightly taller */
+        background: white;
+        border-radius: 50%;
+        position: absolute;
+        top: 7.9px;     /* 33% from top - higher for alert look */
+      }
+      .wsn-header-eye:first-child { left: calc(50% - 4.3px - 0.8px); }  /* 1.6px gap - tighter */
+      .wsn-header-eye:last-child { left: calc(50% + 0.8px); }
       .wsn-panel__title {
-        font-size: 16px;
+        flex: 1;
+        font-size: 15px;
         font-weight: 600;
         color: white;
-        margin-bottom: 2px;
-      }
-      .wsn-header-version {
-        font-size: 11px;
-        color: #888;
-        font-weight: 400;
       }
       .wsn-panel__close {
         width: 28px;
         height: 28px;
         border: none;
         background: transparent;
-        color: #888;
+        color: #666;
         cursor: pointer;
         border-radius: 6px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 18px;
+        font-size: 20px;
         transition: all 150ms ease;
       }
-      .wsn-panel__close:hover {
-        background: #1A1A1A;
-        color: white;
-      }
+      .wsn-panel__close:hover { background: #1A1A1A; color: white; }
 
-      /* ─── Panel Body ─── */
+      /* ─── Panel Body (active view wrapper) ─── */
       .wsn-panel__body {
         display: flex;
         flex-direction: column;
         flex: 1;
-        overflow-y: auto;
-        overflow-x: hidden;
+        overflow: hidden;
       }
-      .wsn-panel__body::-webkit-scrollbar { width: 4px; }
-      .wsn-panel__body::-webkit-scrollbar-track { background: transparent; }
-      .wsn-panel__body::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 
-      /* ─── Session Card ─── */
-      .wsn-session-info {
-        margin: 20px;
-        padding: 16px;
-        background: #1A1A1A;
-        border: 1px solid #333;
-        border-radius: 12px;
+      /* ─── Static Top Section ─── */
+      .wsn-static-top {
         flex-shrink: 0;
+        border-bottom: 1px solid #222;
       }
-      .wsn-session-name {
-        font-size: 15px;
-        font-weight: 600;
-        color: white;
-        margin-bottom: 8px;
-      }
-      .wsn-session-meta {
+
+      /* Session bar */
+      .wsn-session-bar {
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 13px;
-        color: #999;
+        padding: 14px 20px;
+        gap: 12px;
       }
-      .wsn-status-dot {
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background: #22C55E;
-      }
-
-      /* ─── Section Labels ─── */
-      .wsn-label {
-        margin: 24px 20px 12px 20px;
-        font-size: 11px;
+      .wsn-session-bar__info { flex: 1; min-width: 0; }
+      .wsn-session-bar__name {
+        font-size: 14px;
         font-weight: 600;
+        color: white;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .wsn-session-bar__count {
+        font-size: 12px;
+        color: #777;
+        margin-top: 2px;
+      }
+      .wsn-session-bar__delete {
+        width: 32px;
+        height: 32px;
+        background: transparent;
+        border: 1px solid #333;
+        border-radius: 8px;
         color: #666;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 150ms ease;
         flex-shrink: 0;
       }
+      .wsn-session-bar__delete:hover { color: #DC2626; border-color: #DC2626; }
 
-      /* ─── Capture Mode Toggle ─── */
-      .wsn-toggle-group {
-        margin: 0 20px 24px 20px;
+      /* Controls bar */
+      .wsn-controls-bar {
         display: flex;
+        align-items: center;
+        padding: 0 20px 14px 20px;
+        gap: 10px;
+      }
+      .wsn-btn--phone {
+        flex: 1;
+        padding: 10px 14px;
         background: #1A1A1A;
         border: 1px solid #333;
-        border-radius: 10px;
-        padding: 4px;
-        flex-shrink: 0;
-      }
-      .wsn-toggle {
-        flex: 1;
-        padding: 10px 16px;
-        border: none;
-        background: transparent;
-        color: #999;
+        color: #aaa;
         font-size: 13px;
         font-weight: 500;
-        border-radius: 8px;
-        cursor: pointer;
-        transition: all 150ms ease;
-        font-family: inherit;
-      }
-      .wsn-toggle.wsn-toggle--active {
-        background: white;
-        color: black;
-        font-weight: 600;
-      }
-      .wsn-toggle:not(.wsn-toggle--active):hover {
-        color: white;
-        background: rgba(255, 255, 255, 0.05);
-      }
-
-      /* ─── Controls Section ─── */
-      .wsn-controls {
-        margin: 0 20px 24px 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        flex-shrink: 0;
-      }
-      .wsn-btn {
-        border: none;
         border-radius: 10px;
-        font-size: 14px;
-        font-weight: 500;
         cursor: pointer;
-        font-family: inherit;
-        transition: all 150ms ease;
         display: flex;
         align-items: center;
         justify-content: center;
         gap: 8px;
+        transition: all 150ms ease;
+        font-family: inherit;
       }
-      .wsn-btn--pause {
-        padding: 12px 20px;
+      .wsn-btn--phone:hover { background: #252525; border-color: #444; color: white; }
+
+      /* Capture mode toggle */
+      .wsn-toggle-group {
+        display: flex;
         background: #1A1A1A;
         border: 1px solid #333;
-        color: white;
-      }
-      .wsn-btn--pause:hover:not(:disabled) {
-        background: #252525;
-        border-color: #444;
-      }
-      .wsn-btn--delete {
-        padding: 10px 20px;
-        background: transparent;
-        border: 1px solid #333;
-        color: #666;
-        font-size: 13px;
-        border-radius: 8px;
-      }
-      .wsn-btn--delete:hover:not(:disabled) {
-        color: #999;
-        border-color: #444;
-      }
-      .wsn-btn:disabled {
-        opacity: 0.3;
-        cursor: not-allowed;
-      }
-
-      /* ─── Preview Section ─── */
-      .wsn-preview-container {
-        display: flex;
-        flex-direction: column;
+        border-radius: 10px;
+        padding: 3px;
         flex-shrink: 0;
       }
+      .wsn-toggle {
+        width: 38px;
+        height: 34px;
+        border: none;
+        background: transparent;
+        color: #666;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 150ms ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .wsn-toggle.wsn-toggle--active {
+        background: white;
+        color: black;
+      }
+      .wsn-toggle:not(.wsn-toggle--active):hover { color: white; background: rgba(255,255,255,0.05); }
+
+      /* ─── Scrollable Area ─── */
+      .wsn-scroll-area {
+        flex: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        min-height: 0;
+      }
+      .wsn-scroll-area::-webkit-scrollbar { width: 4px; }
+      .wsn-scroll-area::-webkit-scrollbar-track { background: transparent; }
+      .wsn-scroll-area::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
       .wsn-preview-grid {
-        padding: 0 20px 20px 20px;
+        padding: 16px 20px;
         display: flex;
         flex-direction: column;
         gap: 12px;
       }
 
+      /* Thumbnail cards */
       .wsn-thumb {
         position: relative;
         background: #1A1A1A;
-        border: 1px solid #333;
-        border-radius: 10px;
+        border: 1px solid #2A2A2A;
+        border-radius: 12px;
         overflow: hidden;
         cursor: pointer;
         transition: all 150ms ease;
@@ -1077,11 +1193,12 @@
       .wsn-thumb:hover {
         border-color: #444;
         transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
       }
       .wsn-thumb img {
         width: 100%;
-        height: 200px;
+        height: auto;
+        max-height: 240px;
         object-fit: cover;
         display: block;
       }
@@ -1089,11 +1206,11 @@
         position: absolute;
         top: 8px;
         right: 8px;
-        background: rgba(0, 0, 0, 0.8);
+        background: rgba(0,0,0,0.75);
         color: white;
         font-size: 11px;
         font-weight: 600;
-        padding: 4px 8px;
+        padding: 3px 8px;
         border-radius: 6px;
         backdrop-filter: blur(8px);
       }
@@ -1103,11 +1220,11 @@
         left: 8px;
         width: 24px;
         height: 24px;
-        background: rgba(220, 38, 38, 0.9);
+        background: rgba(220,38,38,0.85);
         border: none;
         color: white;
         border-radius: 6px;
-        font-size: 12px;
+        font-size: 13px;
         cursor: pointer;
         opacity: 0;
         transition: opacity 150ms ease;
@@ -1115,73 +1232,114 @@
         align-items: center;
         justify-content: center;
       }
-      .wsn-thumb:hover .wsn-thumb-delete {
-        opacity: 1;
-      }
+      .wsn-thumb:hover .wsn-thumb-delete { opacity: 1; }
       .wsn-thumb-caption {
         padding: 10px 12px;
         font-size: 12px;
-        color: #999;
+        color: #888;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        border-top: 1px solid #252525;
+        border-top: 1px solid #222;
       }
+
+      /* Empty state */
       .wsn-preview-empty {
-        flex: 1;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #666;
+        color: #555;
         text-align: center;
-        gap: 12px;
-        padding: 40px 20px;
+        gap: 10px;
+        padding: 60px 20px;
       }
-      .wsn-preview-empty-icon {
-        font-size: 32px;
-        opacity: 0.5;
-      }
+      .wsn-preview-empty-icon { opacity: 0.6; }
       .wsn-preview-empty-text {
         font-size: 14px;
-        line-height: 1.5;
+        font-weight: 500;
+        color: #555;
       }
-
-      /* ─── Phone Section ─── */
-      .wsn-phone-section {
-        margin: 20px;
-        flex-shrink: 0;
-      }
-      .wsn-btn--phone {
-        width: 100%;
-        padding: 14px 20px;
+      .wsn-preview-empty-hint {
+        font-size: 12px;
+        color: #444;
         background: #1A1A1A;
         border: 1px solid #333;
-        color: #999;
-        font-size: 14px;
-        font-weight: 500;
-        border-radius: 12px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        transition: all 150ms ease;
-      }
-      .wsn-btn--phone:hover {
-        background: #252525;
-        border-color: #444;
-        color: white;
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        letter-spacing: 0.5px;
       }
 
-      /* ─── Actions Section ─── */
-      .wsn-export-section {
-        padding: 20px;
-        border-top: 1px solid #333;
+      /* ─── Footer ─── */
+      .wsn-footer {
+        flex-shrink: 0;
+        padding: 16px 20px;
+        border-top: 1px solid #222;
+      }
+      .wsn-btn--download {
+        width: 100%;
+        padding: 14px 20px;
+        background: white;
+        border: none;
+        color: black;
+        font-size: 14px;
+        font-weight: 600;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 150ms ease;
+        font-family: inherit;
+      }
+      .wsn-btn--download:hover:not(:disabled) {
+        background: #f0f0f0;
+        transform: translateY(-1px);
+      }
+      .wsn-btn--download:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      /* ─── Start View ─── */
+      .wsn-session-info {
+        margin: 24px 20px;
+        padding: 16px;
+        background: #1A1A1A;
+        border: 1px solid #2A2A2A;
+        border-radius: 12px;
+      }
+      .wsn-session-name {
+        font-size: 15px;
+        font-weight: 600;
+        color: white;
+        margin-bottom: 6px;
+      }
+      .wsn-session-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #777;
+      }
+      .wsn-status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #555;
+      }
+      .wsn-label {
+        margin: 0 20px 10px 20px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #555;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .wsn-controls {
+        margin: 0 20px 24px 20px;
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        flex-shrink: 0;
+        gap: 10px;
       }
       .wsn-btn--primary {
         width: 100%;
@@ -1198,34 +1356,10 @@
         justify-content: center;
         gap: 8px;
         transition: all 150ms ease;
+        font-family: inherit;
       }
-      .wsn-btn--primary:hover:not(:disabled) {
-        background: #f5f5f5;
-        transform: translateY(-1px);
-      }
-      .wsn-btn--primary:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-        transform: none;
-      }
-      .wsn-btn--end {
-        width: 100%;
-        padding: 12px 20px;
-        background: transparent;
-        border: 1px solid #333;
-        color: #666;
-        font-size: 13px;
-        font-weight: 500;
-        border-radius: 8px;
-        cursor: pointer;
-        transition: all 150ms ease;
-      }
-      .wsn-btn--end:hover {
-        color: #DC2626;
-        border-color: #DC2626;
-      }
-
-      /* ─── Forms ─── */
+      .wsn-btn--primary:hover:not(:disabled) { background: #f0f0f0; transform: translateY(-1px); }
+      .wsn-btn--primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
       .wsn-input {
         background: #1A1A1A;
         border: 1px solid #333;
@@ -1238,9 +1372,8 @@
         font-family: inherit;
         width: 100%;
       }
-      .wsn-input:focus { 
-        border-color: #555;
-      }
+      .wsn-input:focus { border-color: #555; }
+      .wsn-input--error { border-color: #DC2626 !important; }
 
       /* ─── Modal ─── */
       .wsn-modal-overlay {
@@ -1253,7 +1386,7 @@
         z-index: 100;
       }
       .wsn-modal {
-        background: #0B0B0B;
+        background: #0F0F0F;
         border: 1px solid #333;
         border-radius: 12px;
         padding: 24px;
@@ -1261,23 +1394,9 @@
         width: 100%;
         box-shadow: 0 8px 32px rgba(0,0,0,0.8);
       }
-      .wsn-modal__title {
-        font-weight: 600;
-        font-size: 16px;
-        margin-bottom: 8px;
-        color: white;
-      }
-      .wsn-modal__text {
-        font-size: 14px;
-        color: #999;
-        margin-bottom: 20px;
-        line-height: 1.5;
-      }
-      .wsn-modal__actions {
-        display: flex;
-        gap: 12px;
-        justify-content: flex-end;
-      }
+      .wsn-modal__title { font-weight: 600; font-size: 16px; margin-bottom: 8px; color: white; }
+      .wsn-modal__text { font-size: 14px; color: #999; margin-bottom: 20px; line-height: 1.5; }
+      .wsn-modal__actions { display: flex; gap: 12px; justify-content: flex-end; }
       .wsn-btn--secondary {
         padding: 10px 16px;
         background: transparent;
@@ -1288,18 +1407,15 @@
         border-radius: 8px;
         cursor: pointer;
         transition: all 150ms ease;
+        font-family: inherit;
       }
-      .wsn-btn--secondary:hover {
-        background: #1A1A1A;
-        color: white;
-        border-color: #444;
-      }
+      .wsn-btn--secondary:hover { background: #1A1A1A; color: white; border-color: #444; }
 
-      /* ─── Toast ─── */
+      /* ─── Toasts ─── */
       .wsn-toast-container {
         position: fixed;
-        bottom: 74px;
-        right: 20px;
+        bottom: 80px;
+        right: 24px;
         display: flex;
         flex-direction: column-reverse;
         gap: 8px;
@@ -1307,16 +1423,16 @@
         z-index: 2147483647;
       }
       .wsn-toast {
-        background: #0B0B0B;
-        border: 1px solid #333;
-        border-radius: 8px;
+        background: #111;
+        border: 1px solid #2A2A2A;
+        border-radius: 10px;
         padding: 12px 16px;
         font-size: 13px;
         color: white;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         opacity: 0;
         transform: translateY(8px);
-        transition: opacity 250ms ease, transform 250ms ease;
+        transition: opacity 200ms ease, transform 200ms ease;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         max-width: 300px;
         display: flex;
@@ -1338,6 +1454,57 @@
         font-size: 12px !important;
         border: none !important;
         cursor: pointer;
+      }
+
+      /* ─── QR Upload Modal ─── */
+      .wsn-qr-modal {
+        max-width: 340px;
+      }
+      .wsn-qr-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 32px 0;
+        color: #777;
+        font-size: 13px;
+      }
+      .wsn-spinner {
+        width: 28px;
+        height: 28px;
+        border: 2px solid #333;
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: wsn-spin 0.7s linear infinite;
+      }
+      @keyframes wsn-spin {
+        to { transform: rotate(360deg); }
+      }
+      .wsn-qr-content {
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 0;
+      }
+      .wsn-qr-image {
+        width: 200px;
+        height: 200px;
+        border-radius: 12px;
+        border: 1px solid #333;
+      }
+      .wsn-qr-status {
+        font-size: 12px;
+        color: #777;
+        text-align: center;
+      }
+      .wsn-qr-error {
+        padding: 16px 0;
+        text-align: center;
+      }
+      .wsn-qr-error-text {
+        color: #DC2626;
+        font-size: 13px;
+        line-height: 1.5;
       }
     `;
   }

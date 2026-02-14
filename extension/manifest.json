@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "WebSnap Notes",
-  "version": "0.2.0",
-  "description": "Universal Screenshot to PDF – capture anything in your browser and build notes automatically.",
+  "name": "Snabby",
+  "version": "1.0.0",
+  "description": "Capture, collect & export – screenshot anything in your browser and build notes as PDF.",
   "permissions": [
     "activeTab",
     "storage",
@@ -31,7 +31,7 @@
     }
   ],
   "action": {
-    "default_title": "WebSnap Notes – Click to activate"
+    "default_title": "Snabby – Click to activate"
   },
   "icons": {
     "16": "assets/icons/icon16.png",

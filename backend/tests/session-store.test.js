@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Backend Tests: Session Store
+ * Snabby – Backend Tests: Session Store
  */
 
 const store = require('../src/services/session-store');
