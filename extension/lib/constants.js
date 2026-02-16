@@ -15,7 +15,7 @@ const WSN_CONSTANTS = {
   MEMORY_WARNING_THRESHOLD: 0.8,    // 80%
 
   // Backend URL (configurable via environment / storage)
-  BACKEND_URL: 'http://100.128.160.161:3000',
+  BACKEND_URL: 'http://10.23.146.34:3000',
 
   // Session statuses
   STATUS: {

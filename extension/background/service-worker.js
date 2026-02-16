@@ -18,6 +18,18 @@ const MSG = WSN_CONSTANTS.MSG;
 // ─── QR Upload Session State ────────────────────────
 let uploadSession = null;   // { sessionId, token, qrCode, uploadUrl, pollTimer }
 
+// Keep-alive port: content script opens a long-lived connection so the
+// service worker stays awake while polling for phone uploads.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === 'qr-upload-keepalive') {
+    // Keep a reference so GC doesn't collect the port
+    port.onDisconnect.addListener(() => {
+      // Content script closed the QR modal – stop polling
+      stopPolling();
+    });
+  }
+});
+
 function getBackendUrl() {
   return WSN_CONSTANTS.BACKEND_URL;
 }

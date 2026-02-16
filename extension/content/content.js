@@ -953,13 +953,13 @@
       .wsn-eye--left { left: calc(50% - 8px - 1.5px); }  /* 3px gap - tighter spacing */
       .wsn-eye--right { left: calc(50% + 1.5px); }       /* 3px gap - tighter spacing */
       .wsn-pupil {
-        width: 3px;     /* 37.5% of eye - slightly smaller */
-        height: 3px;
+        width: 4.5px;   /* ~56% of eye width - more visible */
+        height: 4.5px;
         background: #000;
         border-radius: 50%;
         position: absolute;
-        top: 48%;       /* Slightly higher in eyeball */
-        left: 48%;      /* Slightly inward */
+        top: 50%;
+        left: 50%;
         transform: translate(-50%, -50%);
         transition: transform 0.06s linear;
       }
