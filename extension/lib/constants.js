@@ -16,6 +16,7 @@ const WSN_CONSTANTS = {
 
   // Backend URL – set to your Railway deployment URL before publishing
   // For local development: 'http://localhost:3000'
+  // For network testing: 'http://10.124.115.34:3000'
   // For production: 'https://your-app.up.railway.app'
   BACKEND_URL: 'http://localhost:3000',
 

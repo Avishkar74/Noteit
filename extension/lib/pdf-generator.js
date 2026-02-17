@@ -9,6 +9,10 @@
 /* eslint-disable no-unused-vars */
 
 const PdfGenerator = (() => {
+  // ─── Debug flag: set to true to make OCR text layer VISIBLE (red text) ───
+  // This helps verify that text is positioned correctly over the screenshot.
+  // Set to false for production (invisible text, selectable only).
+  const DEBUG_OCR_LAYER = false;
   /**
    * Decode a base64 data URL into raw bytes.
    * @param {string} dataUrl - data:image/png;base64,...
@@ -170,26 +174,55 @@ const PdfGenerator = (() => {
           hScale = Math.max(hScale, 20);  // don't squish below 20%
           hScale = Math.min(hScale, 300); // don't stretch above 300%
         }
-      } catch {
-        // widthOfTextAtSize may fail on unencodable chars
+      } catch (e) {
+        console.warn('[OCR Debug] widthOfTextAtSize failed:', word.text, e.message);
       }
 
       try {
         const encodedText = font.encodeText(word.text);
 
-        page.pushOperators(
+        // In debug mode: draw red bbox rectangle + visible red text
+        // In production: invisible text only (selectable but not visible)
+        const operators = [
           PDFLib.pushGraphicsState(),
-          PDFLib.beginText(),
-          PDFLib.setTextRenderingMode(PDFLib.TextRenderingMode.Invisible),
-          PDFLib.setFontAndSize(fontKey, fontSize),
-          PDFLib.setCharacterSqueeze(hScale),
-          PDFLib.moveText(pdfX, pdfY),
-          PDFLib.showText(encodedText),
-          PDFLib.endText(),
-          PDFLib.popGraphicsState()
-        );
-      } catch {
-        // Character not encodable in Helvetica — skip this word
+        ];
+
+        if (DEBUG_OCR_LAYER) {
+          // Draw word bounding box as a red rectangle (visual debug)
+          const bboxBottom = dims.y + dims.height - y1 * scaleY;
+          operators.push(
+            PDFLib.setStrokingRgbColor(1, 0, 0),
+            PDFLib.setLineWidth(0.5),
+            PDFLib.rectangle(pdfX, bboxBottom, wordWidthPdf, wordHeightPdf),
+            PDFLib.stroke(),
+          );
+          // Red visible text
+          operators.push(
+            PDFLib.beginText(),
+            PDFLib.setFillingRgbColor(1, 0, 0),
+            PDFLib.setTextRenderingMode(PDFLib.TextRenderingMode.Fill),
+            PDFLib.setFontAndSize(fontKey, fontSize),
+            PDFLib.setCharacterSqueeze(hScale),
+            PDFLib.moveText(pdfX, pdfY),
+            PDFLib.showText(encodedText),
+            PDFLib.endText(),
+          );
+        } else {
+          operators.push(
+            PDFLib.beginText(),
+            PDFLib.setTextRenderingMode(PDFLib.TextRenderingMode.Invisible),
+            PDFLib.setFontAndSize(fontKey, fontSize),
+            PDFLib.setCharacterSqueeze(hScale),
+            PDFLib.moveText(pdfX, pdfY),
+            PDFLib.showText(encodedText),
+            PDFLib.endText(),
+          );
+        }
+
+        operators.push(PDFLib.popGraphicsState());
+        page.pushOperators(...operators);
+      } catch (e) {
+        console.warn('[OCR Debug] Word render failed:', word.text, e.message);
       }
     }
   }
@@ -285,6 +318,24 @@ const PdfGenerator = (() => {
       // Draw invisible OCR text ON TOP of the image — makes text selectable/copyable
       const ocrData = ocrTexts && ocrTexts[i] ? ocrTexts[i] : null;
       if (ocrData) {
+        // CRITICAL: Override OCR-reported image dimensions with actual embedded
+        // image dimensions from pdf-lib. This eliminates any possible mismatch
+        // between what image-size reports and what pdf-lib actually embedded.
+        // Both should be the same, but this guarantees correct coordinate mapping.
+        if (ocrData.words && ocrData.words.length > 0) {
+          console.log(`[OCR Debug] Screenshot ${i + 1}:`,
+            `embedded=${imgWidth}x${imgHeight}`,
+            `ocr_reported=${ocrData.imageWidth}x${ocrData.imageHeight}`,
+            `words=${ocrData.words.length}`,
+            `dims={x:${dims.x.toFixed(1)}, y:${dims.y.toFixed(1)}, w:${dims.width.toFixed(1)}, h:${dims.height.toFixed(1)}}`,
+            `page=${pageWidth}x${pageHeight}`);
+          if (ocrData.words[0]) {
+            console.log(`[OCR Debug] First word:`, JSON.stringify(ocrData.words[0]));
+          }
+          // Use the actual embedded image pixel dimensions for coordinate mapping
+          ocrData.imageWidth = imgWidth;
+          ocrData.imageHeight = imgHeight;
+        }
         drawOcrTextLayer(page, ocrData, dims, font);
       }
 

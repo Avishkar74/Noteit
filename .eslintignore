@@ -1,0 +1,12 @@
+# Vendor libraries (minified third-party code)
+extension/vendor/
+
+# Node modules
+node_modules/
+
+# Coverage reports
+coverage/
+
+# Build outputs
+production-build/
+dist/
