@@ -163,6 +163,8 @@
 
   <script>
     const sessionId = window.location.pathname.split('/').pop();
+    const urlParams = new URLSearchParams(window.location.search);
+    const uploadToken = urlParams.get('token') || '';
     const dropZone = document.getElementById('dropZone');
     const galleryInput = document.getElementById('galleryInput');
     const cameraInput = document.getElementById('cameraInput');
@@ -216,6 +218,7 @@
       try {
         const res = await fetch(`/api/upload/${sessionId}`, {
           method: 'POST',
+          headers: { 'X-Upload-Token': uploadToken },
           body: formData,
         });
         const data = await res.json();

@@ -12,10 +12,15 @@ const path = require('path');
 
 const uploadRouter = require('./routes/upload');
 const sessionRouter = require('./routes/session');
-const { cleanupExpiredSessions } = require('./services/session-store');
+const ocrRouter = require('./routes/ocr');
+const { cleanupExpiredSessions, loadSessionsFromDisk } = require('./services/session-store');
+const { terminateWorker: terminateOcrWorker } = require('./services/ocr-service');
 
 const PORT = process.env.PORT || 3000;
 const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+// Load persisted sessions from disk on startup
+loadSessionsFromDisk();
 
 const app = express();
 const server = http.createServer(app);
@@ -33,11 +38,12 @@ app.use(cors());
 app.use(express.json({ limit: '12mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Rate limiting
+// Rate limiting (skip in test environment)
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 30,
   message: { error: 'Too many requests. Please try again later.' },
+  skip: () => process.env.NODE_ENV === 'test',
 });
 app.use('/api/', limiter);
 
@@ -47,6 +53,7 @@ app.set('io', io);
 // Routes
 app.use('/api/session', sessionRouter);
 app.use('/api/upload', uploadRouter);
+app.use('/api/ocr', ocrRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -79,8 +86,9 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 // Graceful shutdown
-function shutdown() {
+async function shutdown() {
   if (cleanupTimer) clearInterval(cleanupTimer);
+  await terminateOcrWorker();
   io.close();
   server.close(() => {
     console.log('Server shut down gracefully.');

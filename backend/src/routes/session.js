@@ -7,7 +7,7 @@
 
 const express = require('express');
 const QRCode = require('qrcode');
-const { createSession, getSession, deleteSession } = require('../services/session-store');
+const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining } = require('../services/session-store');
 
 const router = express.Router();
 
@@ -21,7 +21,7 @@ router.post('/create', async (req, res) => {
     }
 
     const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-    const uploadUrl = `${baseUrl}/upload/${result.sessionId}`;
+    const uploadUrl = `${baseUrl}/upload/${result.sessionId}?token=${result.token}`;
 
     // Generate QR code as data URL
     const qrDataUrl = await QRCode.toDataURL(uploadUrl, {
@@ -49,10 +49,52 @@ router.get('/:id', (req, res) => {
     return res.status(404).json({ error: 'Session not found or expired.' });
   }
 
+  const daysRemaining = getDaysRemaining(req.params.id);
+
   res.json({
     imageCount: session.images.length,
     createdAt: session.createdAt,
+    daysRemaining,
   });
+});
+
+// Get OCR text for all images in a session
+router.get('/:id/ocr', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found or expired.' });
+  }
+
+  const ocrTexts = getOcrTexts(req.params.id);
+  res.json({ ocrTexts });
+});
+
+// Search OCR text across all images in a session
+router.get('/:id/search', (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) {
+    return res.status(404).json({ error: 'Session not found or expired.' });
+  }
+
+  const query = (req.query.q || '').toLowerCase().trim();
+  if (!query) {
+    return res.status(400).json({ error: 'Search query (q) is required.' });
+  }
+
+  const ocrTexts = getOcrTexts(req.params.id);
+  const results = [];
+
+  ocrTexts.forEach((text, index) => {
+    if (text.toLowerCase().includes(query)) {
+      results.push({
+        imageIndex: index,
+        snippet: text.substring(0, 200),
+        matchCount: (text.toLowerCase().split(query).length - 1),
+      });
+    }
+  });
+
+  res.json({ query, results, totalMatches: results.length });
 });
 
 // Get a specific uploaded image by index

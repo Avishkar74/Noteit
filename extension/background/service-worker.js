@@ -37,13 +37,22 @@ function getBackendUrl() {
 async function createUploadSession() {
   const backendUrl = getBackendUrl();
   try {
-    const res = await fetch(`${backendUrl}/api/session/create`, { method: 'POST' });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    const res = await fetch(`${backendUrl}/api/session/create`, {
+      method: 'POST',
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
     if (!res.ok) throw new Error(`Backend returned ${res.status}`);
     const data = await res.json();
     return data; // { sessionId, token, uploadUrl, qrCode }
   } catch (err) {
     console.error('WebSnap: Failed to create upload session', err);
-    return { error: err.message };
+    const message = err.name === 'AbortError'
+      ? 'Connection timed out. Make sure the backend server is running.'
+      : `Failed to connect: ${err.message}`;
+    return { error: message };
   }
 }
 
@@ -306,7 +315,110 @@ async function handleMessage(request, sender) {
 
   case MSG.EXPORT_PDF: {
     try {
-      const result = await PdfGenerator.exportSessionPdf(request.filename);
+      const allOcrData = [];
+      const backendUrl = getBackendUrl();
+
+      // 1. Collect OCR layout data from local extension screenshots
+      //    If a screenshot has no OCR data yet, run OCR now (synchronously)
+      const session = await SessionManager.getSession();
+      if (session && session.screenshotIds) {
+        const total = session.screenshotIds.length;
+
+        for (let i = 0; i < total; i++) {
+          const screenshotId = session.screenshotIds[i];
+          const screenshot = await StorageManager.getScreenshot(screenshotId);
+
+          // Build OCR data object from cached data
+          let ocrData = null;
+          if (screenshot && screenshot.ocrWords && screenshot.ocrWords.length > 0) {
+            ocrData = {
+              text: screenshot.ocrText || '',
+              words: screenshot.ocrWords,
+              imageWidth: screenshot.ocrImageWidth || 0,
+              imageHeight: screenshot.ocrImageHeight || 0,
+            };
+          } else if (screenshot && screenshot.ocrText) {
+            // Legacy: plain text only, no bbox data
+            ocrData = { text: screenshot.ocrText, words: [], imageWidth: 0, imageHeight: 0 };
+          }
+
+          // If no OCR data cached and backend is available, extract now with layout
+          if (!ocrData && backendUrl && screenshot && screenshot.dataUrl) {
+            if (tabId) {
+              try {
+                await chrome.tabs.sendMessage(tabId, {
+                  type: MSG.EXPORT_PROGRESS,
+                  current: i + 1,
+                  total,
+                  phase: 'ocr',
+                });
+              } catch { /* tab may not be listening */ }
+            }
+
+            try {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 25000);
+              const res = await fetch(`${backendUrl}/api/ocr/extract-base64-layout`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: screenshot.dataUrl }),
+                signal: controller.signal,
+              });
+              clearTimeout(timeoutId);
+
+              if (res.ok) {
+                const data = await res.json();
+                ocrData = {
+                  text: data.text || '',
+                  words: data.words || [],
+                  imageWidth: data.imageWidth || 0,
+                  imageHeight: data.imageHeight || 0,
+                };
+                // Cache for future use
+                if (ocrData.text) {
+                  screenshot.ocrText = ocrData.text;
+                  screenshot.ocrWords = ocrData.words;
+                  screenshot.ocrImageWidth = ocrData.imageWidth;
+                  screenshot.ocrImageHeight = ocrData.imageHeight;
+                  await StorageManager.saveScreenshot(screenshotId, screenshot);
+                }
+              }
+            } catch (ocrErr) {
+              console.warn(`Snabby: OCR at export failed for screenshot ${i + 1}:`, ocrErr.message);
+            }
+          }
+
+          allOcrData.push(ocrData);
+        }
+      }
+
+      // 2. Collect OCR from backend upload session (if exists)
+      if (uploadSession && uploadSession.sessionId) {
+        try {
+          const res = await fetch(`${backendUrl}/api/session/${uploadSession.sessionId}/ocr`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.ocrTexts && Array.isArray(data.ocrTexts)) {
+              // Backend ocrTexts are plain text strings — wrap them
+              for (const t of data.ocrTexts) {
+                allOcrData.push(t ? { text: t, words: [], imageWidth: 0, imageHeight: 0 } : null);
+              }
+            }
+          }
+        } catch {
+          // Backend OCR fetch failed — continue with local OCR only
+        }
+      }
+
+      const hasAnyOcr = allOcrData.some(d => d && (d.text || (d.words && d.words.length > 0)));
+      console.log('Snabby: OCR data collected for', allOcrData.length, 'screenshots,',
+        allOcrData.filter(d => d && d.words && d.words.length > 0).length, 'with bounding boxes');
+
+      const result = await PdfGenerator.exportSessionPdf(
+        request.filename,
+        hasAnyOcr ? allOcrData : null
+      );
+
       if (result.error) {
         return { error: result.error, message: getErrorMessage(result.error) };
       }

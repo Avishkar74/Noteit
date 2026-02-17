@@ -1,13 +1,24 @@
 /**
  * WebSnap Notes – Upload Routes
- * POST /api/upload/:sessionId  → upload image to session
+ * POST /api/upload/:sessionId  → upload image to session (with OCR)
  */
 
 const express = require('express');
 const multer = require('multer');
-const { getSession, addImage } = require('../services/session-store');
+const rateLimit = require('express-rate-limit');
+const { getSession, validateToken, addImage } = require('../services/session-store');
+const { extractText } = require('../services/ocr-service');
 
 const router = express.Router();
+
+// Stricter rate limit for uploads: 10 uploads per minute per IP
+// Skip in test environment to avoid interference with test suites
+const uploadLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 10,
+  message: { error: 'Upload rate limit exceeded. Please wait before uploading more images.' },
+  skip: () => process.env.NODE_ENV === 'test',
+});
 
 // Multer config: memory storage, 10MB limit
 const upload = multer({
@@ -23,13 +34,19 @@ const upload = multer({
   },
 });
 
-// Upload image to session
-router.post('/:sessionId', upload.single('image'), (req, res) => {
+// Upload image to session (with stricter rate limit + token auth + OCR)
+router.post('/:sessionId', uploadLimiter, upload.single('image'), async (req, res) => {
   const { sessionId } = req.params;
   const session = getSession(sessionId);
 
   if (!session) {
     return res.status(404).json({ error: 'Session not found or expired.' });
+  }
+
+  // Token-based authentication: token can be in header or query
+  const token = req.headers['x-upload-token'] || req.query.token;
+  if (!token || !validateToken(sessionId, token)) {
+    return res.status(403).json({ error: 'Invalid or missing upload token.' });
   }
 
   if (!req.file) {
@@ -40,7 +57,16 @@ router.post('/:sessionId', upload.single('image'), (req, res) => {
   const base64 = req.file.buffer.toString('base64');
   const dataUrl = `data:${req.file.mimetype};base64,${base64}`;
 
-  const result = addImage(sessionId, dataUrl);
+  // Run OCR on the uploaded image (non-blocking — don't fail upload if OCR fails)
+  let ocrText = '';
+  try {
+    const ocrResult = await extractText(req.file.buffer);
+    ocrText = ocrResult.text || '';
+  } catch (err) {
+    console.warn('OCR failed for upload, continuing without text:', err.message);
+  }
+
+  const result = addImage(sessionId, dataUrl, ocrText);
   if (result.error) {
     return res.status(400).json({ error: result.error });
   }
@@ -51,10 +77,11 @@ router.post('/:sessionId', upload.single('image'), (req, res) => {
     io.to(`session:${sessionId}`).emit('image-uploaded', {
       imageCount: result.imageCount,
       dataUrl,
+      ocrText,
     });
   }
 
-  res.json({ success: true, imageCount: result.imageCount });
+  res.json({ success: true, imageCount: result.imageCount, ocrText });
 });
 
 // Error handler for multer

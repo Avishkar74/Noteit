@@ -103,7 +103,7 @@ describe('Session Store – Image Operations', () => {
 
       // Manually expire
       const session = store.getSession(sessionId);
-      session.createdAt = Date.now() - 31 * 60 * 1000;
+      session.createdAt = Date.now() - 8 * 24 * 60 * 60 * 1000; // 8 days ago
 
       store.cleanupExpiredSessions();
       const images = store.getImages(sessionId);

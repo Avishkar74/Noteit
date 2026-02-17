@@ -100,7 +100,7 @@ describe('QR Upload Integration', () => {
 
   describe('Full upload-then-retrieve flow', () => {
     test('upload image via POST then retrieve via GET', async () => {
-      const { sessionId } = store.createSession();
+      const { sessionId, token } = store.createSession();
 
       // Upload
       const pngBuffer = Buffer.from(
@@ -110,6 +110,7 @@ describe('QR Upload Integration', () => {
 
       const uploadRes = await request(app)
         .post(`/api/upload/${sessionId}`)
+        .set('X-Upload-Token', token)
         .attach('image', pngBuffer, 'test.png');
 
       expect(uploadRes.status).toBe(200);
@@ -120,6 +121,24 @@ describe('QR Upload Integration', () => {
       expect(getRes.status).toBe(200);
       expect(getRes.body.dataUrl).toContain('data:image/png;base64,');
       expect(getRes.body.index).toBe(0);
+
+      store.deleteSession(sessionId);
+    });
+
+    test('upload with token in query param works', async () => {
+      const { sessionId, token } = store.createSession();
+
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+
+      const uploadRes = await request(app)
+        .post(`/api/upload/${sessionId}?token=${token}`)
+        .attach('image', pngBuffer, 'test.png');
+
+      expect(uploadRes.status).toBe(200);
+      expect(uploadRes.body.success).toBe(true);
 
       store.deleteSession(sessionId);
     });

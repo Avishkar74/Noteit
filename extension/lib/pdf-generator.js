@@ -1,6 +1,7 @@
 /**
  * WebSnap Notes – PDF Generator
  * Generates a PDF document from session screenshots using pdf-lib.
+ * Supports embedding invisible OCR text behind images for copy/search.
  * Runs in service-worker context (loaded via importScripts after pdf-lib).
  */
 
@@ -72,20 +73,182 @@ const PdfGenerator = (() => {
   }
 
   /**
+   * Draw invisible OCR text on a PDF page using word-level bounding boxes.
+   * Each word is positioned exactly where Tesseract detected it in the image,
+   * scaled to match the PDF page dimensions. Uses TextRenderingMode.Invisible
+   * so text is selectable but not visible.
+   *
+   * @param {PDFPage} page
+   * @param {object} ocrData - OCR layout data
+   * @param {string} ocrData.text - Full recognized text
+   * @param {Array<{text: string, bbox: {x0: number, y0: number, x1: number, y1: number}}>} ocrData.words
+   * @param {number} ocrData.imageWidth - Original image width in pixels
+   * @param {number} ocrData.imageHeight - Original image height in pixels
+   * @param {{ x: number, y: number, width: number, height: number }} dims - Image dimensions on PDF page
+   * @param {PDFFont} font - Embedded font
+   */
+  function drawOcrTextLayer(page, ocrData, dims, font) {
+    if (!ocrData) return;
+
+    // If we have word-level bounding boxes AND image dimensions, use precise positioning
+    const words = ocrData.words || [];
+    const imgW = ocrData.imageWidth || 0;
+    const imgH = ocrData.imageHeight || 0;
+
+    if (words.length > 0 && imgW > 0 && imgH > 0) {
+      drawWordsByBbox(page, words, imgW, imgH, dims, font);
+      return;
+    }
+
+    // Fallback: plain text with fixed line spacing (no bbox data available)
+    const text = ocrData.text || '';
+    if (!text || text.trim().length === 0) return;
+    drawPlainTextFallback(page, text, dims, font);
+  }
+
+  /**
+   * Draw each OCR word at its exact bounding box position.
+   * Scales from Tesseract pixel coords → PDF page coords.
+   *
+   * Key coordinate mapping:
+   *   Tesseract: origin = top-left, y increases downward
+   *   PDF:       origin = bottom-left, y increases upward
+   *
+   * Baseline fix: PDF moveText positions text at its *baseline*, not top.
+   * Helvetica ascent ≈ 0.72 × fontSize  (718/1000 units).
+   * We place the baseline so that the ascenders reach bbox-top and
+   * descenders reach bbox-bottom.
+   */
+  function drawWordsByBbox(page, words, imgW, imgH, dims, font) {
+    // Scale factors: image pixels → PDF points
+    const scaleX = dims.width / imgW;
+    const scaleY = dims.height / imgH;
+
+    // Register font on the page for low-level operators
+    const fontKey = page.node.newFontDictionary(font.name, font.ref);
+
+    // Helvetica metrics (per 1000 unit em-square)
+    const ASCENT = 718;   // units above baseline
+    const DESCENT = -207; // units below baseline (negative)
+    const EM = ASCENT - DESCENT; // 925 units total
+
+    for (const word of words) {
+      if (!word.text || !word.bbox) continue;
+
+      const { x0, y0, x1, y1 } = word.bbox;
+
+      // Word height & width in PDF points
+      const wordHeightPdf = (y1 - y0) * scaleY;
+      const wordWidthPdf = (x1 - x0) * scaleX;
+
+      // Skip tiny or invalid bounding boxes
+      if (wordHeightPdf < 2 || wordWidthPdf < 2) continue;
+
+      // Font size: scale so the full glyph height (ascent+|descent|) fits the bbox
+      let fontSize = Math.max((wordHeightPdf / EM) * 1000, 4);
+      fontSize = Math.min(fontSize, 72); // cap at reasonable max
+
+      // Baseline offset from bbox top (in PDF points)
+      // ascent portion of the font at this fontSize
+      const baselineFromTop = (ASCENT / 1000) * fontSize;
+
+      // PDF X: straightforward horizontal mapping
+      const pdfX = dims.x + x0 * scaleX;
+
+      // PDF Y: convert bbox top (y0) from image coords to PDF coords,
+      // then drop down by the ascent to reach the baseline.
+      // Image y0 → PDF top = dims.y + dims.height - y0 * scaleY
+      // Baseline sits ascent-distance below that top.
+      const pdfY = dims.y + dims.height - y0 * scaleY - baselineFromTop;
+
+      // Compute text width at this font size and scale horizontally to fit bbox
+      let hScale = 100; // percentage, 100 = normal
+      try {
+        const textWidthAtSize = font.widthOfTextAtSize(word.text, fontSize);
+        if (textWidthAtSize > 0) {
+          hScale = (wordWidthPdf / textWidthAtSize) * 100;
+          hScale = Math.max(hScale, 20);  // don't squish below 20%
+          hScale = Math.min(hScale, 300); // don't stretch above 300%
+        }
+      } catch {
+        // widthOfTextAtSize may fail on unencodable chars
+      }
+
+      try {
+        const encodedText = font.encodeText(word.text);
+
+        page.pushOperators(
+          PDFLib.pushGraphicsState(),
+          PDFLib.beginText(),
+          PDFLib.setTextRenderingMode(PDFLib.TextRenderingMode.Invisible),
+          PDFLib.setFontAndSize(fontKey, fontSize),
+          PDFLib.setCharacterSqueeze(hScale),
+          PDFLib.moveText(pdfX, pdfY),
+          PDFLib.showText(encodedText),
+          PDFLib.endText(),
+          PDFLib.popGraphicsState()
+        );
+      } catch {
+        // Character not encodable in Helvetica — skip this word
+      }
+    }
+  }
+
+  /**
+   * Fallback: draw OCR text line-by-line with fixed spacing.
+   * Used when no bounding box data is available.
+   */
+  function drawPlainTextFallback(page, text, dims, font) {
+    const fontSize = 10;
+    const lineHeight = fontSize * 1.4;
+    const lines = text.split('\n').filter(l => l.trim().length > 0);
+    const fontKey = page.node.newFontDictionary(font.name, font.ref);
+
+    let currentY = dims.y + dims.height - fontSize;
+
+    for (const line of lines) {
+      if (currentY < dims.y) break;
+
+      try {
+        const encodedText = font.encodeText(line);
+        page.pushOperators(
+          PDFLib.pushGraphicsState(),
+          PDFLib.beginText(),
+          PDFLib.setTextRenderingMode(PDFLib.TextRenderingMode.Invisible),
+          PDFLib.setFontAndSize(fontKey, fontSize),
+          PDFLib.moveText(dims.x + 2, currentY),
+          PDFLib.showText(encodedText),
+          PDFLib.endText(),
+          PDFLib.popGraphicsState()
+        );
+      } catch {
+        // Skip unencodable lines
+      }
+
+      currentY -= lineHeight;
+    }
+  }
+
+  /**
    * Generate a PDF from an array of screenshot objects.
    * @param {Array<{ dataUrl: string }>} screenshots
    * @param {string} title - PDF title / session name
    * @param {function} [onProgress] - optional (current, total) callback
+   * @param {Array<object>} [ocrTexts] - optional array of OCR data objects (one per screenshot)
+   *   Each object: { text, words, imageWidth, imageHeight } or plain string (fallback)
    * @returns {Promise<Uint8Array>} PDF bytes
    */
-  async function generate(screenshots, title, onProgress) {
-    const { PDFDocument } = PDFLib;
+  async function generate(screenshots, title, onProgress, ocrTexts) {
+    const { PDFDocument, StandardFonts } = PDFLib;
     const margin = WSN_CONSTANTS.PDF.PAGE_MARGIN;
 
     const pdfDoc = await PDFDocument.create();
     pdfDoc.setTitle(title || 'WebSnap Notes');
     pdfDoc.setCreator('WebSnap Notes Extension');
     pdfDoc.setProducer('pdf-lib');
+
+    // Embed standard font for OCR text layer
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
     const total = screenshots.length;
 
@@ -111,12 +274,19 @@ const PdfGenerator = (() => {
       const page = pdfDoc.addPage([pageWidth, pageHeight]);
       const dims = fitToPage(imgWidth, imgHeight, pageWidth, pageHeight, margin);
 
+      // Draw image FIRST
       page.drawImage(image, {
         x: dims.x,
         y: dims.y,
         width: dims.width,
         height: dims.height,
       });
+
+      // Draw invisible OCR text ON TOP of the image — makes text selectable/copyable
+      const ocrData = ocrTexts && ocrTexts[i] ? ocrTexts[i] : null;
+      if (ocrData) {
+        drawOcrTextLayer(page, ocrData, dims, font);
+      }
 
       if (onProgress) {
         onProgress(i + 1, total);
@@ -129,9 +299,10 @@ const PdfGenerator = (() => {
   /**
    * Generate PDF from the current session and trigger download.
    * @param {string} [filename] - optional override
+   * @param {Array<object>} [ocrTexts] - optional array of OCR data objects
    * @returns {Promise<{ success: boolean, error?: string }>}
    */
-  async function exportSessionPdf(filename) {
+  async function exportSessionPdf(filename, ocrTexts) {
     const session = await SessionManager.getSession();
     if (!session) return { error: 'NO_SESSION' };
     if (session.screenshotCount === 0) return { error: 'NO_SCREENSHOTS' };
@@ -139,7 +310,7 @@ const PdfGenerator = (() => {
     const screenshots = await SessionManager.getAllScreenshots();
     if (screenshots.length === 0) return { error: 'NO_SCREENSHOTS' };
 
-    const pdfBytes = await generate(screenshots, session.name);
+    const pdfBytes = await generate(screenshots, session.name, null, ocrTexts);
 
     // Convert to base64 data URL for chrome.downloads
     const base64 = arrayBufferToBase64(pdfBytes);
@@ -177,6 +348,7 @@ const PdfGenerator = (() => {
     _decodeDataUrl: decodeDataUrl,
     _fitToPage: fitToPage,
     _arrayBufferToBase64: arrayBufferToBase64,
+    _drawOcrTextLayer: drawOcrTextLayer,
   };
 })();
 

@@ -36,6 +36,32 @@ jobs:
       - name: Run tests
         run: npx jest --ci --coverage --verbose
 
+      - name: Run backend tests with coverage
+        run: cd backend && npx jest --ci --coverage --verbose
+
+      - name: Check backend test coverage threshold
+        run: |
+          cd backend
+          npx jest --coverage --coverageReporters=json-summary --silent
+          node -e "
+            const summary = require('./coverage/coverage-summary.json');
+            const total = summary.total;
+            const lines = total.lines.pct;
+            const branches = total.branches.pct;
+            const functions = total.functions.pct;
+            const statements = total.statements.pct;
+            console.log('Backend Coverage:');
+            console.log('  Lines:      ' + lines + '%');
+            console.log('  Branches:   ' + branches + '%');
+            console.log('  Functions:  ' + functions + '%');
+            console.log('  Statements: ' + statements + '%');
+            if (lines < 70 || functions < 70 || statements < 70) {
+              console.error('FAIL: Backend test coverage below 70% threshold');
+              process.exit(1);
+            }
+            console.log('PASS: Backend test coverage meets 70% threshold');
+          "
+
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4

@@ -14,8 +14,10 @@ const WSN_CONSTANTS = {
   MEMORY_LIMIT: 200 * 1024 * 1024, // 200 MB
   MEMORY_WARNING_THRESHOLD: 0.8,    // 80%
 
-  // Backend URL (configurable via environment / storage)
-  BACKEND_URL: 'http://10.23.146.34:3000',
+  // Backend URL – set to your Railway deployment URL before publishing
+  // For local development: 'http://localhost:3000'
+  // For production: 'https://your-app.up.railway.app'
+  BACKEND_URL: 'http://localhost:3000',
 
   // Session statuses
   STATUS: {

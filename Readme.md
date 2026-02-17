@@ -1,10 +1,10 @@
-# WebSnap Notes
+# Snabby
 
 > Universal Screenshot to PDF – Chrome Extension
 
-**Browse normally. Press "ctrl + shift + S" key. Your notes build themselves.**
+**Browse normally. Press "Ctrl + Shift + S". Your notes build themselves.**
 
-WebSnap Notes is a Chromium browser extension that captures visible or selected portions of webpages and builds a live PDF document in the background. Works on any website — documentation, tutorials, dashboards, articles, code snippets, and more.
+Snabby is a Chromium browser extension that captures visible or selected portions of webpages and builds a live PDF document in the background. Works on any website — documentation, tutorials, dashboards, articles, code snippets, and more.
 
 ---
 
@@ -22,8 +22,19 @@ WebSnap Notes is a Chromium browser extension that captures visible or selected 
 | Dark theme UI with Shadow DOM isolation | ✅ Phase 2 |
 | QR-based phone upload | ✅ Phase 3 |
 | Backend (Node.js + Socket.io) | ✅ Phase 3 |
+| Token-based upload authentication | ✅ Phase 3 |
+| Upload rate limiting (10/min) | ✅ Phase 3 |
+| Auto-cleanup of expired sessions (7 days) | ✅ Phase 3/5 |
+| File type/size validation (JPG/PNG/WEBP, 10MB) | ✅ Phase 3 |
+| Graceful error handling (backend down) | ✅ Phase 3 |
 | Docker + GHCR publishing | ✅ Phase 4 |
 | CI/CD (GitHub Actions) | ✅ Phase 4 |
+| 70% backend test coverage gate | ✅ Phase 4 |
+| File-based persistent storage (survives restarts) | ✅ Phase 5 |
+| 7-day session expiry (up from 30 min) | ✅ Phase 5 |
+| OCR text extraction on upload (Tesseract.js) | ✅ Phase 5 |
+| Searchable/selectable text in exported PDFs | ✅ Phase 5 |
+| Text search across captures | ✅ Phase 5 |
 
 ---
 
@@ -59,7 +70,7 @@ npm run generate-icons
 
 ### Usage
 
-1. Click the **WebSnap Notes** icon in the toolbar → floating icon appears
+1. Click the **Snabby** icon in the toolbar → floating icon appears
 2. Click the floating icon → side panel opens
 3. Enter a session name and click **Start Session**
 4. Browse any website and press `Ctrl+Shift+S` to capture
@@ -126,10 +137,17 @@ NoteIt/
 
 ### How It Works
 
-- Backend creates a temporary upload session (30-min expiry)
-- QR code encodes the upload URL with your laptop's local IP
+- Backend creates a temporary upload session (7-day expiry with file-based persistence)
+- Sessions persist across server restarts (saved to `data/sessions/` directory)
+- QR code encodes the upload URL with your laptop's local IP and a unique session token
+- Token-based authentication ensures only authorized uploads reach your session
+- **OCR:** Uploaded images are processed with Tesseract.js to extract text automatically
+- Upload rate limited to 10 uploads per minute per IP to prevent abuse
 - Extension polls the backend every 2 seconds for new uploads
 - Uploaded images are automatically added to your active session
+- **Search:** Search across all OCR-extracted text in the extension panel
+- **Selectable PDFs:** Exported PDFs have invisible OCR text layers – you can select and copy text
+- When backend is unavailable, extension shows a graceful error message with 10s timeout
 
 ### Configuration
 
@@ -160,6 +178,29 @@ Exposes backend on `http://100.128.160.161:3000`
 
 ---
 
+## OCR & Text Search (Phase 5)
+
+### OCR (Optical Character Recognition)
+- **Automatic:** All uploaded images are processed with Tesseract.js to extract text
+- **Non-blocking:** Upload succeeds even if OCR fails (empty text stored)
+- **Selectable PDFs:** Exported PDFs include an invisible text layer behind images
+- **Copy text from PDFs:** Open the PDF, select text with your cursor, and copy it
+
+### Search Across Captures
+1. Click the **Search** bar in the extension panel (appears above captures)
+2. Type your query (e.g., "login", "API key", "documentation")
+3. Results show in real-time with:
+   - Image number/badge
+   - Text snippet with matched keyword highlighted
+   - Match count per image
+4. Click any result to scroll to that capture
+
+**Backend API:**
+- `GET /api/session/:id/ocr` – Get all OCR texts for a session
+- `GET /api/session/:id/search?q=query` – Search OCR text (case-insensitive)
+
+---
+
 ## Running Tests
 
 ```bash
@@ -179,8 +220,9 @@ npm test
 
 **Test coverage:**
 - **Extension:** 115 tests across 5 suites
-- **Backend:** 51 tests across 4 suites
-- **Total:** 166 tests, all passing ✅
+- **Backend:** 105 tests across 7 suites (72%+ coverage)
+- **Total:** 220 tests, all passing ✅
+- **Backend coverage threshold:** 70% minimum enforced in CI
 
 ---
 
@@ -188,11 +230,14 @@ npm test
 
 ### CI (All Branches)
 - Lint, test, build extension
+- Run backend tests with 70% coverage threshold enforcement
 - Triggers on push to any branch / PR to main
 
 ### CD (Main Branch Only)
 - Build, test, package extension
-- Build & push Docker image to GHCR (when backend exists)
+- Run backend tests
+- Build & push Docker image to GHCR with semantic version tags
+- Tags: `latest`, `v{semver}`, `v{run_number}`
 
 ---
 
@@ -207,6 +252,11 @@ main
 ```
 
 No direct commits to `main`. All work goes through phase branches → PR → merge.
+
+**Branch protection rules (must be configured in GitHub repo settings):**
+- Require pull request reviews before merging
+- Require status checks to pass (CI must pass)
+- No direct pushes to main
 
 ---
 
@@ -232,8 +282,10 @@ No direct commits to `main`. All work goes through phase branches → PR → mer
 ## Technology Stack
 
 - **Extension:** Plain JavaScript, Manifest V3, Shadow DOM
-- **PDF:** pdf-lib
-- **Backend (Phase 3):** Node.js 20, Express, Socket.io
+- **PDF:** pdf-lib (with invisible OCR text layers)
+- **OCR:** Tesseract.js (text extraction from images)
+- **Backend (Phase 3):** Node.js 20, Express, Socket.io, Multer
+- **Storage:** File-based JSON persistence (no database required)
 - **Testing:** Jest
 - **CI/CD:** GitHub Actions
 - **Container Registry:** GHCR

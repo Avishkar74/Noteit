@@ -35,6 +35,13 @@ jobs:
       - name: Run tests
         run: npx jest --ci --verbose
 
+      - name: Run backend tests
+        run: cd backend && npx jest --ci --verbose
+
+      - name: Get version from package.json
+        id: version
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> $GITHUB_OUTPUT
+
       - name: Package extension
         run: |
           mkdir -p dist
@@ -73,4 +80,5 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ toLower(github.repository_owner) }}/noteit:latest
+            ghcr.io/${{ toLower(github.repository_owner) }}/noteit:v${{ steps.version.outputs.version }}
             ghcr.io/${{ toLower(github.repository_owner) }}/noteit:v${{ github.run_number }}

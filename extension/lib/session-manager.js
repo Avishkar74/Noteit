@@ -28,6 +28,52 @@ const SessionManager = (() => {
     return Math.ceil(base64.length * 0.75);
   }
 
+  /**
+   * Extract OCR text from a screenshot and update storage.
+   * Non-blocking: runs in background after screenshot is saved.
+   * @param {string} screenshotId 
+   * @param {string} dataUrl 
+   */
+  async function extractOcrText(screenshotId, dataUrl) {
+    const backendUrl = WSN_CONSTANTS.BACKEND_URL;
+    if (!backendUrl) return; // Backend not configured
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout for OCR
+
+      // Use layout endpoint to get word-level bounding boxes
+      const response = await fetch(`${backendUrl}/api/ocr/extract-base64-layout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.warn('Snabby: OCR endpoint returned', response.status);
+        return;
+      }
+
+      const result = await response.json();
+
+      // Update the screenshot with OCR layout data
+      const screenshot = await StorageManager.getScreenshot(screenshotId);
+      if (screenshot) {
+        screenshot.ocrText = result.text || '';
+        screenshot.ocrWords = result.words || [];
+        screenshot.ocrImageWidth = result.imageWidth || 0;
+        screenshot.ocrImageHeight = result.imageHeight || 0;
+        await StorageManager.saveScreenshot(screenshotId, screenshot);
+      }
+    } catch (err) {
+      // Silent fail – OCR is a nice-to-have, not required
+      console.warn('Snabby: OCR extraction failed', err.message);
+    }
+  }
+
   // ─── Session CRUD ────────────────────────────────
 
   async function getSession() {
@@ -117,6 +163,7 @@ const SessionManager = (() => {
       url: metadata.url || '',
       tabTitle: metadata.tabTitle || '',
       size,
+      ocrText: '', // Will be populated asynchronously
     };
 
     await StorageManager.saveScreenshot(screenshotId, screenshot);
@@ -125,6 +172,11 @@ const SessionManager = (() => {
     session.screenshotCount++;
     session.memoryUsage += size;
     await StorageManager.saveSession(session);
+
+    // Extract OCR text asynchronously (non-blocking)
+    extractOcrText(screenshotId, dataUrl).catch(err => {
+      console.warn('Snabby: OCR extraction failed for screenshot', screenshotId, err);
+    });
 
     const warningThreshold = MEMORY_LIMIT * MEMORY_WARNING_THRESHOLD;
     const warning = session.memoryUsage > warningThreshold ? 'MEMORY_WARNING' : null;

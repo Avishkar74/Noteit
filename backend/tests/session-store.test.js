@@ -120,7 +120,7 @@ describe('Session Store', () => {
       // Create a session and manually expire it
       const { sessionId } = store.createSession();
       const session = store.getSession(sessionId);
-      session.createdAt = Date.now() - 31 * 60 * 1000; // 31 minutes ago
+      session.createdAt = Date.now() - 8 * 24 * 60 * 60 * 1000; // 8 days ago (expiry is 7 days)
 
       store.cleanupExpiredSessions();
       expect(store.getSession(sessionId)).toBeNull();
