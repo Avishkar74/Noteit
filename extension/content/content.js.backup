@@ -527,7 +527,7 @@
         <div class="wsn-preview-grid" id="wsn-preview-grid">
           <div class="wsn-preview-empty">
             <div class="wsn-preview-empty-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
             </div>
             <div class="wsn-preview-empty-text">No captures yet</div>
             <div class="wsn-preview-empty-hint">Ctrl + Shift + S</div>
@@ -671,7 +671,7 @@
       grid.innerHTML = `
         <div class="wsn-preview-empty">
           <div class="wsn-preview-empty-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#555" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
           </div>
           <div class="wsn-preview-empty-text">No captures yet</div>
           <div class="wsn-preview-empty-hint">Ctrl + Shift + S</div>
@@ -1087,8 +1087,8 @@
         right: -420px;
         width: 400px;
         height: 100vh;
-        background: #000;
-        border-left: 1px solid #ffffff;
+        background: #0F0F0F;
+        border-left: 1px solid #222;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         font-size: 14px;
         line-height: 1.4;
@@ -1108,7 +1108,7 @@
         display: flex;
         align-items: center;
         padding: 16px 20px 20px 20px;
-        border-bottom: 1px solid #ffffff;
+        border-bottom: 1px solid #222;
         gap: 12px;
         flex-shrink: 0;
       }
@@ -1161,9 +1161,9 @@
       .wsn-panel__close {
         width: 28px;
         height: 28px;
-        border: 1px solid transparent;
+        border: none;
         background: transparent;
-        color: #ffffff;
+        color: #666;
         cursor: pointer;
         border-radius: 6px;
         display: flex;
@@ -1172,7 +1172,7 @@
         font-size: 20px;
         transition: all 150ms ease;
       }
-      .wsn-panel__close:hover { border-color: #ffffff; color: white; }
+      .wsn-panel__close:hover { background: #1A1A1A; color: white; }
 
       /* ─── Panel Body (active view wrapper) ─── */
       .wsn-panel__body {
@@ -1185,7 +1185,7 @@
       /* ─── Static Top Section ─── */
       .wsn-static-top {
         flex-shrink: 0;
-        border-bottom: 1px solid #ffffff;
+        border-bottom: 1px solid #222;
       }
 
       /* Session bar */
@@ -1206,17 +1206,16 @@
       }
       .wsn-session-bar__count {
         font-size: 12px;
-        color: #ffffff;
-        opacity: 0.7;
+        color: #777;
         margin-top: 2px;
       }
       .wsn-session-bar__delete {
         width: 32px;
         height: 32px;
         background: transparent;
-        border: 1px solid #ffffff;
+        border: 1px solid #333;
         border-radius: 8px;
-        color: #ffffff;
+        color: #666;
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -1224,7 +1223,7 @@
         transition: all 150ms ease;
         flex-shrink: 0;
       }
-      .wsn-session-bar__delete:hover { color: #DC2626; border-color: #DC2626; background: #ffffff; }
+      .wsn-session-bar__delete:hover { color: #DC2626; border-color: #DC2626; }
 
       /* Controls bar */
       .wsn-controls-bar {
@@ -1236,9 +1235,9 @@
       .wsn-btn--phone {
         flex: 1;
         padding: 10px 14px;
-        background: #000;
-        border: 1px solid #ffffff;
-        color: #ffffff;
+        background: #1A1A1A;
+        border: 1px solid #333;
+        color: #aaa;
         font-size: 13px;
         font-weight: 500;
         border-radius: 10px;
@@ -1250,13 +1249,13 @@
         transition: all 150ms ease;
         font-family: inherit;
       }
-      .wsn-btn--phone:hover { background: #ffffff; color: #000; border-color: #ffffff; }
+      .wsn-btn--phone:hover { background: #252525; border-color: #444; color: white; }
 
       /* Capture mode toggle */
       .wsn-toggle-group {
         display: flex;
-        background: #000;
-        border: 1px solid #ffffff;
+        background: #1A1A1A;
+        border: 1px solid #333;
         border-radius: 10px;
         padding: 3px;
         flex-shrink: 0;
@@ -1266,7 +1265,7 @@
         height: 34px;
         border: none;
         background: transparent;
-        color: #ffffff;
+        color: #666;
         border-radius: 8px;
         cursor: pointer;
         transition: all 150ms ease;
@@ -1278,7 +1277,7 @@
         background: white;
         color: black;
       }
-      .wsn-toggle:not(.wsn-toggle--active):hover { color: white; background: #ffffff; border: 1px solid #ffffff; }
+      .wsn-toggle:not(.wsn-toggle--active):hover { color: white; background: rgba(255,255,255,0.05); }
 
       /* ─── Scrollable Area ─── */
       .wsn-scroll-area {
@@ -1289,7 +1288,7 @@
       }
       .wsn-scroll-area::-webkit-scrollbar { width: 4px; }
       .wsn-scroll-area::-webkit-scrollbar-track { background: transparent; }
-      .wsn-scroll-area::-webkit-scrollbar-thumb { background: #ffffff; border-radius: 2px; }
+      .wsn-scroll-area::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
 
       .wsn-preview-grid {
         padding: 16px 20px;
@@ -1301,8 +1300,8 @@
       /* Thumbnail cards */
       .wsn-thumb {
         position: relative;
-        background: #000;
-        border: 1px solid #ffffff;
+        background: #1A1A1A;
+        border: 1px solid #2A2A2A;
         border-radius: 12px;
         overflow: hidden;
         cursor: pointer;
@@ -1310,9 +1309,9 @@
         flex-shrink: 0;
       }
       .wsn-thumb:hover {
-        border-width: 2px;
+        border-color: #444;
         transform: translateY(-1px);
-        box-shadow: 0 4px 16px rgba(255,255,255,0.2);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
       }
       .wsn-thumb img {
         width: 100%;
@@ -1355,12 +1354,11 @@
       .wsn-thumb-caption {
         padding: 10px 12px;
         font-size: 12px;
-        color: #ffffff;
-        opacity: 0.8;
+        color: #888;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        border-top: 1px solid #ffffff;
+        border-top: 1px solid #222;
       }
 
       /* Empty state */
@@ -1369,22 +1367,22 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #ffffff;
+        color: #555;
         text-align: center;
         gap: 10px;
         padding: 60px 20px;
       }
-      .wsn-preview-empty-icon { opacity: 0.7; }
+      .wsn-preview-empty-icon { opacity: 0.6; }
       .wsn-preview-empty-text {
         font-size: 14px;
         font-weight: 500;
-        color: #ffffff;
+        color: #555;
       }
       .wsn-preview-empty-hint {
         font-size: 12px;
-        color: #ffffff;
-        background: #000;
-        border: 1px solid #ffffff;
+        color: #444;
+        background: #1A1A1A;
+        border: 1px solid #333;
         padding: 6px 14px;
         border-radius: 6px;
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
@@ -1395,7 +1393,7 @@
       .wsn-footer {
         flex-shrink: 0;
         padding: 16px 20px;
-        border-top: 1px solid #ffffff;
+        border-top: 1px solid #222;
       }
       .wsn-btn--download {
         width: 100%;
@@ -1409,12 +1407,10 @@
         cursor: pointer;
         transition: all 150ms ease;
         font-family: inherit;
-        box-shadow: 0 2px 8px rgba(255,255,255,0.2);
       }
       .wsn-btn--download:hover:not(:disabled) {
-        background: #ffffff;
+        background: #f0f0f0;
         transform: translateY(-1px);
-        box-shadow: 0 4px 16px rgba(255,255,255,0.3);
       }
       .wsn-btn--download:disabled {
         opacity: 0.35;
@@ -1442,14 +1438,13 @@
         align-items: center;
         gap: 8px;
         font-size: 13px;
-        color: #ffffff;
-        opacity: 0.8;
+        color: #777;
       }
       .wsn-status-dot {
         width: 6px;
         height: 6px;
         border-radius: 50%;
-        background: #ffffff;
+        background: #555;
       }
       .wsn-status-dot--ready {
         background: #22C55E;
@@ -1459,8 +1454,7 @@
         margin: 0 20px 8px 20px;
         font-size: 11px;
         font-weight: 600;
-        color: #ffffff;
-        opacity: 0.7;
+        color: #555;
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
@@ -1478,8 +1472,7 @@
       .wsn-input-icon {
         position: absolute;
         left: 12px;
-        color: #ffffff;
-        opacity: 0.6;
+        color: #666;
         pointer-events: none;
       }
       .wsn-btn--primary {
@@ -1534,8 +1527,7 @@
         margin: 20px 20px;
         text-align: center;
         position: relative;
-        color: #ffffff;
-        opacity: 0.8;
+        color: #4a4a4a;
         font-size: 11px;
         font-weight: 500;
       }
@@ -1546,7 +1538,7 @@
         top: 50%;
         width: calc(50% - 25px);
         height: 0.5px;
-        background: #ffffff;
+        background: rgba(255, 255, 255, 0.08);
       }
       .wsn-divider::before { left: 0; }
       .wsn-divider::after { right: 0; }
@@ -1676,8 +1668,8 @@
         z-index: 100;
       }
       .wsn-modal {
-        background: #000;
-        border: 1px solid #ffffff;
+        background: #0F0F0F;
+        border: 1px solid #333;
         border-radius: 12px;
         padding: 24px;
         max-width: 320px;
@@ -1685,13 +1677,13 @@
         box-shadow: 0 8px 32px rgba(0,0,0,0.8);
       }
       .wsn-modal__title { font-weight: 600; font-size: 16px; margin-bottom: 8px; color: white; }
-      .wsn-modal__text { font-size: 14px; color: #ffffff; opacity: 0.8; margin-bottom: 20px; line-height: 1.5; }
+      .wsn-modal__text { font-size: 14px; color: #999; margin-bottom: 20px; line-height: 1.5; }
       .wsn-modal__actions { display: flex; gap: 12px; justify-content: flex-end; }
       .wsn-btn--secondary {
         padding: 10px 16px;
         background: transparent;
-        border: 1px solid #ffffff;
-        color: #ffffff;
+        border: 1px solid #333;
+        color: #999;
         font-size: 13px;
         font-weight: 500;
         border-radius: 8px;
@@ -1699,7 +1691,7 @@
         transition: all 150ms ease;
         font-family: inherit;
       }
-      .wsn-btn--secondary:hover { background: #ffffff; color: #000; border-color: #ffffff; }
+      .wsn-btn--secondary:hover { background: #1A1A1A; color: white; border-color: #444; }
 
       /* ─── Toasts ─── */
       .wsn-toast-container {
@@ -1713,13 +1705,13 @@
         z-index: 2147483647;
       }
       .wsn-toast {
-        background: #000;
-        border: 1px solid #ffffff;
+        background: #111;
+        border: 1px solid #2A2A2A;
         border-radius: 10px;
         padding: 12px 16px;
         font-size: 13px;
         color: white;
-        box-shadow: 0 4px 20px rgba(255,255,255,0.2);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
         opacity: 0;
         transform: translateY(8px);
         transition: opacity 200ms ease, transform 200ms ease;
@@ -1756,15 +1748,14 @@
         align-items: center;
         gap: 12px;
         padding: 32px 0;
-        color: #ffffff;
-        opacity: 0.8;
+        color: #777;
         font-size: 13px;
       }
       .wsn-spinner {
         width: 28px;
         height: 28px;
-        border: 2px solid #ffffff;
-        border-top-color: #000;
+        border: 2px solid #333;
+        border-top-color: #fff;
         border-radius: 50%;
         animation: wsn-spin 0.7s linear infinite;
       }
@@ -1781,12 +1772,11 @@
         width: 200px;
         height: 200px;
         border-radius: 12px;
-        border: 1px solid #ffffff;
+        border: 1px solid #333;
       }
       .wsn-qr-status {
         font-size: 12px;
-        color: #ffffff;
-        opacity: 0.8;
+        color: #777;
         text-align: center;
       }
       .wsn-qr-error {
