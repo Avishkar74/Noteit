@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – PDF Generator
+ * Snabbly – PDF Generator
  * Generates a PDF document from session screenshots using pdf-lib.
  * Supports embedding invisible OCR text behind images for copy/search.
  * Runs in service-worker context (loaded via importScripts after pdf-lib).
@@ -276,8 +276,8 @@ const PdfGenerator = (() => {
     const margin = WSN_CONSTANTS.PDF.PAGE_MARGIN;
 
     const pdfDoc = await PDFDocument.create();
-    pdfDoc.setTitle(title || 'WebSnap Notes');
-    pdfDoc.setCreator('WebSnap Notes Extension');
+    pdfDoc.setTitle(title || 'Snabbly');
+    pdfDoc.setCreator('Snabbly Extension');
     pdfDoc.setProducer('pdf-lib');
 
     // Embed standard font for OCR text layer
@@ -293,7 +293,7 @@ const PdfGenerator = (() => {
         image = await embedImage(pdfDoc, bytes, mimeType);
       } catch {
         // Skip images that fail to embed (corrupt data)
-        console.warn(`WebSnap Notes: Skipping screenshot ${i + 1} – embed failed`);
+        console.warn(`Snabbly: Skipping screenshot ${i + 1} – embed failed`);
         continue;
       }
 
@@ -367,7 +367,7 @@ const PdfGenerator = (() => {
     const base64 = arrayBufferToBase64(pdfBytes);
     const dataUrl = `data:application/pdf;base64,${base64}`;
 
-    const safeName = (filename || session.name || 'WebSnap-Notes')
+    const safeName = (filename || session.name || 'Snabbly')
       .replace(/[^a-zA-Z0-9_\- ]/g, '')
       .replace(/\s+/g, '_');
 

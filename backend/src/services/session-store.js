@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – File-Backed Session Store
+ * Snabbly – File-Backed Session Store
  * Manages upload sessions with automatic expiration and disk persistence.
  * Sessions are kept in memory for fast access and persisted to JSON files on disk.
  * On server start, sessions are loaded from disk so data survives restarts.

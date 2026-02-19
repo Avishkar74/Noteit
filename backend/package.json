@@ -1,7 +1,7 @@
 {
-  "name": "websnap-backend",
+  "name": "snabbly-backend",
   "version": "0.3.0",
-  "description": "WebSnap Notes – Backend for QR-based phone uploads",
+  "description": "Snabbly – Backend for QR-based phone uploads",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

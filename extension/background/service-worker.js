@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Background Service Worker
+ * Snabbly – Background Service Worker
  * Handles: activation, screenshot capture, session management,
  *          PDF export, message routing.
  * Manifest V3 service worker – no persistent state, always use storage.
@@ -48,7 +48,7 @@ async function createUploadSession() {
     const data = await res.json();
     return data; // { sessionId, token, uploadUrl, qrCode }
   } catch (err) {
-    console.error('WebSnap: Failed to create upload session', err);
+    console.error('Snabbly: Failed to create upload session', err);
     const message = err.name === 'AbortError'
       ? 'Connection timed out. Make sure the backend server is running.'
       : `Failed to connect: ${err.message}`;
@@ -247,6 +247,12 @@ async function handleMessage(request, sender) {
   const tabId = sender.tab ? sender.tab.id : null;
 
   switch (request.type) {
+  case MSG.DELETE_CAPTURE:
+    if (typeof request.index === 'number') {
+      return SessionManager.deleteScreenshotByIndex(request.index);
+    }
+    return { error: 'NO_INDEX' };
+
   case MSG.GET_SESSION: {
     const session = await SessionManager.getSession();
     const activated = await StorageManager.isActivated();
@@ -352,7 +358,9 @@ async function handleMessage(request, sender) {
                   total,
                   phase: 'ocr',
                 });
-              } catch { /* tab may not be listening */ }
+              } catch (e) {
+                // tab may not be listening
+              }
             }
 
             try {
@@ -405,7 +413,7 @@ async function handleMessage(request, sender) {
               }
             }
           }
-        } catch {
+        } catch (e) {
           // Backend OCR fetch failed — continue with local OCR only
         }
       }
@@ -521,6 +529,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
     await StorageManager.saveSettings({ ...WSN_CONSTANTS.DEFAULT_SETTINGS });
-    console.log('WebSnap Notes installed successfully.');
+    console.log('Snabbly installed successfully.');
   }
 });

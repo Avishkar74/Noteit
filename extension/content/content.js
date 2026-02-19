@@ -60,6 +60,7 @@
     PAUSE_SESSION: 'PAUSE_SESSION',
     RESUME_SESSION: 'RESUME_SESSION',
     DELETE_LAST: 'DELETE_LAST',
+    DELETE_CAPTURE: 'DELETE_CAPTURE',
     UNDO_DELETE: 'UNDO_DELETE',
     EXPORT_PDF: 'EXPORT_PDF',
     SET_CAPTURE_MODE: 'SET_CAPTURE_MODE',
@@ -311,6 +312,17 @@
 
     const input = view.querySelector('.wsn-input');
     const btn = view.querySelector('.wsn-btn--primary');
+
+    // Prevent page-level hotkeys (e.g., YouTube captions) while typing the session name
+    const stopKeyEvent = (e) => {
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+    };
+    input.addEventListener('keydown', stopKeyEvent, true);
+    input.addEventListener('keypress', stopKeyEvent, true);
+    input.addEventListener('keyup', stopKeyEvent, true);
 
     btn.addEventListener('click', async () => {
       const name = input.value.trim();

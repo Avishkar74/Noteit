@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Session Manager
+ * Snabbly – Session Manager
  * Manages screenshot sessions: create, capture, pause, resume, delete, export.
  * Runs in service-worker context (loaded via importScripts).
  */
@@ -218,6 +218,35 @@ const SessionManager = (() => {
     return { success: true, count: session.screenshotCount, deletedId: lastId };
   }
 
+  // Delete screenshot by index
+  async function deleteScreenshotByIndex(index) {
+    const session = await getSession();
+    if (!session || session.screenshotIds.length === 0 || index < 0 || index >= session.screenshotIds.length) {
+      return { error: 'INVALID_INDEX' };
+    }
+
+    const screenshotId = session.screenshotIds[index];
+    const screenshot = await StorageManager.getScreenshot(screenshotId);
+
+    // Save to undo buffer
+    if (screenshot) {
+      await StorageManager.setUndoBuffer({
+        screenshot: screenshot,
+        sessionSnapshot: { ...session },
+        deletedAt: Date.now(),
+      });
+    }
+
+    // Remove from session
+    session.screenshotIds.splice(index, 1);
+    session.screenshotCount = Math.max(0, session.screenshotCount - 1);
+    session.memoryUsage = Math.max(0, session.memoryUsage - (screenshot ? screenshot.size : 0));
+    await StorageManager.saveSession(session);
+    await StorageManager.removeScreenshot(screenshotId);
+
+    return { success: true, count: session.screenshotCount, deletedId: screenshotId };
+  }
+
   async function undoDelete() {
     const undoBuffer = await StorageManager.getUndoBuffer();
     if (!undoBuffer) return { error: 'NOTHING_TO_UNDO' };
@@ -294,6 +323,7 @@ const SessionManager = (() => {
     addScreenshot,
     deleteLastScreenshot,
     undoDelete,
+    deleteScreenshotByIndex,
     getAllScreenshots,
     getThumbnails,
     clearSessionData,

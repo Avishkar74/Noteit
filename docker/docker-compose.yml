@@ -5,7 +5,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: websnap-backend
+    container_name: snabbly-backend
     ports:
       - '3000:3000'
     environment:

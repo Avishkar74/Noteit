@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Constants
+ * Snabbly – Constants
  * Shared constants used across the extension.
  * In service-worker context, loaded via importScripts.
  * In content script context, embedded directly.
@@ -18,7 +18,7 @@ const WSN_CONSTANTS = {
   // For local development: 'http://localhost:3000'
   // For network testing: 'http://10.124.115.34:3000'
   // For production: 'https://your-app.up.railway.app'
-  BACKEND_URL: 'http://localhost:3000',
+  BACKEND_URL: 'http://10.124.115.34:3000',
 
   // Session statuses
   STATUS: {
@@ -52,6 +52,7 @@ const WSN_CONSTANTS = {
     PAUSE_SESSION: 'PAUSE_SESSION',
     RESUME_SESSION: 'RESUME_SESSION',
     DELETE_LAST: 'DELETE_LAST',
+    DELETE_CAPTURE: 'DELETE_CAPTURE',
     UNDO_DELETE: 'UNDO_DELETE',
     EXPORT_PDF: 'EXPORT_PDF',
     SET_CAPTURE_MODE: 'SET_CAPTURE_MODE',

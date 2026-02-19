@@ -1,6 +1,6 @@
-# JOURNEY.md – WebSnap Notes Development Log
+# JOURNEY.md – Snabbly Development Log
 
-This document tracks the development journey of WebSnap Notes from initial concept to production-ready extension.
+This document tracks the development journey of Snabbly from initial concept to production-ready extension.
 
 ---
 

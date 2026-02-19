@@ -1,7 +1,7 @@
 {
-  "name": "websnap-notes",
+  "name": "snabbly",
   "version": "0.3.0",
-  "description": "WebSnap Notes – Universal Screenshot to PDF Chrome Extension",
+  "description": "Snabbly – Universal Screenshot to PDF Chrome Extension",
   "private": true,
   "scripts": {
     "test": "jest --verbose",

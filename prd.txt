@@ -1,9 +1,9 @@
 📄 MASTER PRODUCT REQUIREMENTS DOCUMENT (FINAL)
 🧾 Project Name
-WebSnap Notes – Universal Screenshot to PDF Chrome Extension
+Snabbly – Universal Screenshot to PDF Chrome Extension
 1️⃣ Product Vision
 
-WebSnap Notes is a Chromium-based browser extension that enables users to:
+Snabbly is a Chromium-based browser extension that enables users to:
 
 Capture visible or selected portions of webpages
 
@@ -325,7 +325,7 @@ Tag with semantic version
 
 Format:
 
-ghcr.io/<org-name>/websnap-backend:vX.Y.Z
+ghcr.io/<org-name>/snabbly-backend:vX.Y.Z
 
 7️⃣ CI/CD Requirements
 CI (All Branches)

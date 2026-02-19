@@ -54,7 +54,7 @@ Backend will be available at `http://100.128.160.161:3000`
 - ✅ Ensure phone and laptop are on **same Wi-Fi network**
 - ✅ Check Windows Firewall allows incoming on port 3000:
   ```powershell
-  New-NetFirewallRule -DisplayName "WebSnap Backend" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
+  New-NetFirewallRule -DisplayName "Snabbly Backend" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
   ```
 
 ### IP Address Changed

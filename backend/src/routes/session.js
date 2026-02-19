@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Session Routes
+ * Snabbly – Session Routes
  * POST /api/session/create  → creates upload session, returns QR data
  * GET  /api/session/:id     → gets session info
  * DELETE /api/session/:id   → deletes session

@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Backend Server
+ * Snabbly – Backend Server
  * Handles QR-based phone uploads via Express + Socket.io
  */
 
@@ -103,7 +103,7 @@ process.on('SIGINT', shutdown);
 if (process.env.NODE_ENV !== 'test') {
   server.listen(PORT, '0.0.0.0', () => {
     const baseUrl = process.env.BASE_URL || `http://localhost:${PORT}`;
-    console.log(`WebSnap backend running on port ${PORT}`);
+    console.log(`Snabbly backend running on port ${PORT}`);
     console.log(`Upload URL: ${baseUrl}`);
     console.log(`Access from phone: Ensure devices are on same Wi-Fi network`);
   });

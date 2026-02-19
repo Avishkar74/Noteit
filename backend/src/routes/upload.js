@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Upload Routes
+ * Snabbly – Upload Routes
  * POST /api/upload/:sessionId  → upload image to session (with OCR)
  */
 

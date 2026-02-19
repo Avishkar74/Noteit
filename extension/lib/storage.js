@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – Storage Wrapper
+ * Snabbly – Storage Wrapper
  * Thin wrapper around chrome.storage.local for cleaner access.
  * Works in service-worker context (loaded via importScripts).
  */

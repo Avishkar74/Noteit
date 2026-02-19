@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – OCR Routes
+ * Snabbly – OCR Routes
  * Endpoint for extracting text from images without storing them.
  */
 

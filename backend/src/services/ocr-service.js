@@ -1,5 +1,5 @@
 /**
- * WebSnap Notes – OCR Service
+ * Snabbly – OCR Service
  * Extracts text from images using Tesseract.js.
  * Returns recognized text that can be embedded in PDFs as a selectable text layer.
  */

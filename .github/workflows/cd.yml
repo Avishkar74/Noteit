@@ -45,13 +45,13 @@ jobs:
       - name: Package extension
         run: |
           mkdir -p dist
-          cd extension && zip -r ../dist/websnap-notes.zip . -x "*.DS_Store"
+          cd extension && zip -r ../dist/snabbly.zip . -x "*.DS_Store"
 
       - name: Upload extension artifact
         uses: actions/upload-artifact@v4
         with:
-          name: websnap-notes-release
-          path: dist/websnap-notes.zip
+          name: snabbly-release
+          path: dist/snabbly.zip
 
       # ─── Docker (Phase 3 – Backend) ───
       - name: Check if backend exists
@@ -71,6 +71,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set lowercase owner
+        id: lc_owner
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Build and push backend image
         if: steps.check-backend.outputs.exists == 'true'
         uses: docker/build-push-action@v5
@@ -79,6 +83,6 @@ jobs:
           file: docker/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ toLower(github.repository_owner) }}/noteit:latest
-            ghcr.io/${{ toLower(github.repository_owner) }}/noteit:v${{ steps.version.outputs.version }}
-            ghcr.io/${{ toLower(github.repository_owner) }}/noteit:v${{ github.run_number }}
+            ghcr.io/${{ steps.lc_owner.outputs.owner }}/noteit:latest
+            ghcr.io/${{ steps.lc_owner.outputs.owner }}/noteit:v${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.lc_owner.outputs.owner }}/noteit:v${{ github.run_number }}
