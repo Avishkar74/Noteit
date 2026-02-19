@@ -35,6 +35,9 @@ jobs:
       - name: Run tests
         run: npx jest --ci --verbose
 
+      - name: Install backend dependencies
+        run: cd backend && npm ci
+
       - name: Run backend tests
         run: cd backend && npx jest --ci --verbose
 

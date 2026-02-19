@@ -36,6 +36,9 @@ jobs:
       - name: Run tests
         run: npx jest --ci --coverage --verbose
 
+      - name: Install backend dependencies
+        run: cd backend && npm ci
+
       - name: Run backend tests with coverage
         run: cd backend && npx jest --ci --coverage --verbose
 

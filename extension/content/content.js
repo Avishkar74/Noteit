@@ -271,8 +271,12 @@
     header.innerHTML = `
       <div class="wsn-header-icon">
         <div class="wsn-header-face">
-          <div class="wsn-header-eye"></div>
-          <div class="wsn-header-eye"></div>
+          <div class="wsn-header-eye">
+            <div class="wsn-header-pupil"></div>
+          </div>
+          <div class="wsn-header-eye">
+            <div class="wsn-header-pupil"></div>
+          </div>
         </div>
       </div>
       <span class="wsn-panel__title">Snabby</span>
@@ -292,26 +296,58 @@
 
   function renderStartView() {
     const view = el('div', 'wsn-panel__body');
+    const defaultMode = currentSettings?.captureMode || 'visible';
 
     view.innerHTML = `
       <div class="wsn-session-info">
-        <div class="wsn-session-name">New Session</div>
+        <div class="wsn-session-name">Start a New Session</div>
         <div class="wsn-session-meta">
-          <div class="wsn-status-dot"></div>
+          <div class="wsn-status-dot wsn-status-dot--ready"></div>
           Ready to start
         </div>
       </div>
       
-      <div class="wsn-label">Session Name</div>
+      <div class="wsn-label">SESSION NAME</div>
       
       <div class="wsn-controls">
-        <input type="text" class="wsn-input" placeholder="e.g., System Design Notes" maxlength="100" />
+        <div class="wsn-input-wrapper">
+          <svg class="wsn-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          <input type="text" class="wsn-input" placeholder="Say my name!" maxlength="100" />
+        </div>
         <button class="wsn-btn--primary">Start Capture Session</button>
+      </div>
+      
+      <div class="wsn-divider">OR</div>
+      
+      <div class="wsn-mode-selection">
+        <button class="wsn-mode-card ${defaultMode === 'visible' ? 'wsn-mode-card--active' : ''}" data-mode="visible">
+          <div class="wsn-mode-card__icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </div>
+          <div class="wsn-mode-card__title">Full Screen</div>
+          <div class="wsn-mode-card__desc">Capture entire page</div>
+          <div class="wsn-mode-card__radio"></div>
+        </button>
+        <button class="wsn-mode-card ${defaultMode === 'region' ? 'wsn-mode-card--active' : ''}" data-mode="region">
+          <div class="wsn-mode-card__icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 4"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>
+          </div>
+          <div class="wsn-mode-card__title">Crop Region</div>
+          <div class="wsn-mode-card__desc">Select specific area</div>
+          <div class="wsn-mode-card__radio"></div>
+        </button>
+      </div>
+      
+      <div class="wsn-hint">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <span>Select Full Screen or Crop Region to capture your screenshot.</span>
       </div>
     `;
 
     const input = view.querySelector('.wsn-input');
     const btn = view.querySelector('.wsn-btn--primary');
+    const modeCards = view.querySelectorAll('.wsn-mode-card');
+    let selectedMode = defaultMode;
 
     // Prevent page-level hotkeys (e.g., YouTube captions) while typing the session name
     const stopKeyEvent = (e) => {
@@ -324,6 +360,15 @@
     input.addEventListener('keypress', stopKeyEvent, true);
     input.addEventListener('keyup', stopKeyEvent, true);
 
+    // Mode selection
+    modeCards.forEach(card => {
+      card.addEventListener('click', () => {
+        selectedMode = card.dataset.mode;
+        modeCards.forEach(c => c.classList.remove('wsn-mode-card--active'));
+        card.classList.add('wsn-mode-card--active');
+      });
+    });
+
     btn.addEventListener('click', async () => {
       const name = input.value.trim();
       if (!name) {
@@ -334,6 +379,9 @@
 
       btn.disabled = true;
       btn.textContent = 'Starting...';
+
+      // Set the selected capture mode before starting session
+      await sendMessage({ type: MSG.SET_CAPTURE_MODE, mode: selectedMode });
 
       const result = await sendMessage({ type: MSG.START_SESSION, name });
 
@@ -1012,40 +1060,55 @@
       .wsn-panel__header {
         display: flex;
         align-items: center;
-        padding: 16px 20px;
+        padding: 16px 20px 20px 20px;
         border-bottom: 1px solid #222;
         gap: 10px;
         flex-shrink: 0;
       }
       .wsn-header-icon {
-        width: 28px;
-        height: 28px;
+        width: 30px;
+        height: 30px;
         background: transparent;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
+        margin-right: 2px;
       }
       .wsn-header-face {
-        width: 24px;
-        height: 24px;
+        width: 28px;
+        height: 28px;
         background: #000;
         border-radius: 50%;
         position: relative;
-        border: 1px solid #3a3a3a;
-        box-shadow: 0 2.4px 5px rgba(0,0,0,0.25);
+        border: 1px solid #333;
+        box-shadow: 0 3px 6px rgba(0,0,0,0.3);
       }
       .wsn-header-eye {
-        width: 4.3px;   /* 18% of face - slightly smaller */
-        height: 4.8px;  /* 20% of face - slightly taller */
+        width: 5px;      /* 18% of face diameter */
+        height: 5.9px;   /* 21% of face diameter - slightly vertical oval */
         background: white;
         border-radius: 50%;
         position: absolute;
-        top: 7.9px;     /* 33% from top - higher for alert look */
+        top: 50%;
+        transform: translateY(-50%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
       }
-      .wsn-header-eye:first-child { left: calc(50% - 4.3px - 0.8px); }  /* 1.6px gap - tighter */
-      .wsn-header-eye:last-child { left: calc(50% + 0.8px); }
+      .wsn-header-eye:first-child { left: calc(50% - 5px - 1.5px); }  /* centered spacing */
+      .wsn-header-eye:last-child { left: calc(50% + 1.5px); }
+      .wsn-header-pupil {
+        width: 2.2px;    /* 44% of white eye width */
+        height: 2.2px;
+        background: #000;
+        border-radius: 50%;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+      }
       .wsn-panel__title {
         flex: 1;
         font-size: 15px;
@@ -1314,7 +1377,7 @@
 
       /* ─── Start View ─── */
       .wsn-session-info {
-        margin: 24px 20px;
+        margin: 16px 20px;
         padding: 16px;
         background: #1A1A1A;
         border: 1px solid #2A2A2A;
@@ -1339,8 +1402,12 @@
         border-radius: 50%;
         background: #555;
       }
+      .wsn-status-dot--ready {
+        background: #22C55E;
+        box-shadow: 0 0 6px rgba(34, 197, 94, 0.3);
+      }
       .wsn-label {
-        margin: 0 20px 10px 20px;
+        margin: 0 20px 8px 20px;
         font-size: 11px;
         font-weight: 600;
         color: #555;
@@ -1348,10 +1415,21 @@
         letter-spacing: 0.5px;
       }
       .wsn-controls {
-        margin: 0 20px 24px 20px;
+        margin: 0 20px 16px 20px;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 12px;
+      }
+      .wsn-input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+      }
+      .wsn-input-icon {
+        position: absolute;
+        left: 12px;
+        color: #666;
+        pointer-events: none;
       }
       .wsn-btn--primary {
         width: 100%;
@@ -1376,7 +1454,7 @@
         background: #1A1A1A;
         border: 1px solid #333;
         border-radius: 8px;
-        padding: 10px 12px;
+        padding: 10px 12px 10px 40px;
         color: white;
         font-size: 14px;
         outline: none;
@@ -1386,6 +1464,118 @@
       }
       .wsn-input:focus { border-color: #555; }
       .wsn-input--error { border-color: #DC2626 !important; }
+
+      /* ─── Mode Selection ─── */
+      .wsn-divider {
+        margin: 20px 20px;
+        text-align: center;
+        position: relative;
+        color: #4a4a4a;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      .wsn-divider::before,
+      .wsn-divider::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        width: calc(50% - 25px);
+        height: 0.5px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+      .wsn-divider::before { left: 0; }
+      .wsn-divider::after { right: 0; }
+      
+      .wsn-mode-selection {
+        margin: 0 20px 16px 20px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .wsn-mode-card {
+        background: transparent;
+        border: 1px solid #2A2A2A;
+        border-radius: 12px;
+        padding: 20px 16px;
+        cursor: pointer;
+        transition: all 200ms ease;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        position: relative;
+        font-family: inherit;
+      }
+      .wsn-mode-card:hover {
+        border-color: #3A3A3A;
+        background: rgba(255, 255, 255, 0.02);
+      }
+      .wsn-mode-card--active {
+        border-color: #3d7bbf;
+        background: rgba(74, 144, 226, 0.03);
+      }
+      .wsn-mode-card__icon {
+        margin-bottom: 10px;
+        color: #666;
+      }
+      .wsn-mode-card__icon svg {
+        width: 45px;
+        height: 45px;
+      }
+      .wsn-mode-card--active .wsn-mode-card__icon {
+        color: #4A90E2;
+      }
+      .wsn-mode-card__title {
+        font-size: 14px;
+        font-weight: 600;
+        color: white;
+        margin-bottom: 4px;
+      }
+      .wsn-mode-card__desc {
+        font-size: 11px;
+        color: #777;
+        margin-bottom: 12px;
+      }
+      .wsn-mode-card__radio {
+        width: 16px;
+        height: 16px;
+        border: 2px solid #3A3A3A;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .wsn-mode-card--active .wsn-mode-card__radio {
+        border-color: #4A90E2;
+      }
+      .wsn-mode-card--active .wsn-mode-card__radio::after {
+        content: '';
+        width: 8px;
+        height: 8px;
+        background: #4A90E2;
+        border-radius: 50%;
+      }
+      
+      .wsn-hint {
+        margin: 0 20px 24px 20px;
+        padding: 10px 12px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        font-size: 11px;
+        color: #777;
+        line-height: 1.5;
+      }
+      .wsn-hint svg {
+        flex-shrink: 0;
+        width: 14px;
+        height: 14px;
+        color: #555;
+        margin-top: 1px;
+      }
 
       /* ─── Modal ─── */
       .wsn-modal-overlay {
