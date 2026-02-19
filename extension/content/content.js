@@ -317,10 +317,10 @@
           </defs>
           <circle class="wsn-mascot__outer-ring" cx="20" cy="20" r="16" fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.3"/>
           <circle class="wsn-mascot__face" cx="20" cy="20" r="14.5" fill="#000" stroke="#ffffff" stroke-width="1" filter="url(#wsn-shadow)"/>
-          <ellipse class="wsn-mascot__eye wsn-mascot__eye--left" cx="15" cy="18.5" rx="3" ry="3.5" fill="white"/>
-          <ellipse class="wsn-mascot__eye wsn-mascot__eye--right" cx="25" cy="18.5" rx="3" ry="3.5" fill="white"/>
-          <circle class="wsn-mascot__pupil wsn-mascot__pupil--left" cx="15" cy="18.5" r="1.3" fill="#000"/>
-          <circle class="wsn-mascot__pupil wsn-mascot__pupil--right" cx="25" cy="18.5" r="1.3" fill="#000"/>
+          <ellipse class="wsn-mascot__eye wsn-mascot__eye--left" cx="16" cy="18.5" rx="3" ry="3.5" fill="white"/>
+          <ellipse class="wsn-mascot__eye wsn-mascot__eye--right" cx="24" cy="18.5" rx="3" ry="3.5" fill="white"/>
+          <circle class="wsn-mascot__pupil wsn-mascot__pupil--left" cx="16" cy="18.5" r="1.3" fill="#000"/>
+          <circle class="wsn-mascot__pupil wsn-mascot__pupil--right" cx="24" cy="18.5" r="1.3" fill="#000"/>
         </svg>
       </div>
       <span class="wsn-panel__title">Snabby</span>
@@ -694,13 +694,10 @@
       // Delete button handler
       thumbEl.querySelector('.wsn-thumb-delete').addEventListener('click', async (e) => {
         e.stopPropagation();
-        const confirmed = confirm(`Delete capture #${idx + 1}?`);
-        if (confirmed) {
-          const result = await sendMessage({ type: MSG.DELETE_CAPTURE, index: idx });
-          if (result.success) {
-            // Capture deleted silently
-            await refreshPanelContent();
-          }
+        const result = await sendMessage({ type: MSG.DELETE_CAPTURE, index: idx });
+        if (result.success) {
+          // Capture deleted silently
+          await refreshPanelContent();
         }
       });
 
@@ -1109,12 +1106,12 @@
         align-items: center;
         padding: 16px 20px 20px 20px;
         border-bottom: 1px solid #ffffff;
-        gap: 12px;
+        gap: 8px;
         flex-shrink: 0;
       }
       .wsn-header-logo {
-        width: 40px;
-        height: 40px;
+        width: 48px;
+        height: 48px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1122,6 +1119,8 @@
       }
       .wsn-mascot {
         display: block;
+        width: 48px;
+        height: 48px;
         animation: wsn-float 3s ease-in-out infinite;
         transition: transform 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
         cursor: pointer;
@@ -1152,11 +1151,12 @@
       }
       .wsn-panel__title {
         flex: 1;
-        font-size: 19px;
+        font-size: 26px;
         font-weight: 700;
         color: white;
         letter-spacing: -0.02em;
         text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+        font-family: 'Poppins', 'Montserrat', 'Segoe UI', Arial, cursive, sans-serif;
       }
       .wsn-panel__close {
         width: 28px;
