@@ -259,6 +259,37 @@
     }, 200);
   }
 
+  function startMascotAnimation(header) {
+    const leftEye = header.querySelector('.wsn-mascot__eye--left');
+    const rightEye = header.querySelector('.wsn-mascot__eye--right');
+    const leftPupil = header.querySelector('.wsn-mascot__pupil--left');
+    const rightPupil = header.querySelector('.wsn-mascot__pupil--right');
+
+    // Blink animation
+    function blink() {
+      if (leftEye && rightEye) {
+        leftEye.style.transform = 'scaleY(0.1)';
+        rightEye.style.transform = 'scaleY(0.1)';
+        leftPupil.style.opacity = '0';
+        rightPupil.style.opacity = '0';
+
+        setTimeout(() => {
+          leftEye.style.transform = 'scaleY(1)';
+          rightEye.style.transform = 'scaleY(1)';
+          leftPupil.style.opacity = '1';
+          rightPupil.style.opacity = '1';
+        }, 150);
+      }
+
+      // Random blink interval between 2-5 seconds
+      const nextBlink = 2000 + Math.random() * 3000;
+      setTimeout(blink, nextBlink);
+    }
+
+    // Start blinking after 1 second
+    setTimeout(blink, 1000);
+  }
+
   async function refreshPanelContent() {
     const state = await sendMessage({ type: MSG.GET_SESSION });
     currentSession = state.session;
@@ -269,20 +300,36 @@
     // Header
     const header = el('div', 'wsn-panel__header');
     header.innerHTML = `
-      <div class="wsn-header-icon">
-        <div class="wsn-header-face">
-          <div class="wsn-header-eye">
-            <div class="wsn-header-pupil"></div>
-          </div>
-          <div class="wsn-header-eye">
-            <div class="wsn-header-pupil"></div>
-          </div>
-        </div>
+      <div class="wsn-header-logo">
+        <svg class="wsn-mascot" viewBox="0 0 40 40" width="40" height="40">
+          <defs>
+            <filter id="wsn-shadow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur in="SourceAlpha" stdDeviation="2.5"/>
+              <feOffset dx="0" dy="3" result="offsetblur"/>
+              <feComponentTransfer>
+                <feFuncA type="linear" slope="0.5"/>
+              </feComponentTransfer>
+              <feMerge>
+                <feMergeNode/>
+                <feMergeNode in="SourceGraphic"/>
+              </feMerge>
+            </filter>
+          </defs>
+          <circle class="wsn-mascot__outer-ring" cx="20" cy="20" r="16" fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.3"/>
+          <circle class="wsn-mascot__face" cx="20" cy="20" r="14.5" fill="#000" stroke="#ffffff" stroke-width="1" filter="url(#wsn-shadow)"/>
+          <ellipse class="wsn-mascot__eye wsn-mascot__eye--left" cx="15" cy="18.5" rx="3" ry="3.5" fill="white"/>
+          <ellipse class="wsn-mascot__eye wsn-mascot__eye--right" cx="25" cy="18.5" rx="3" ry="3.5" fill="white"/>
+          <circle class="wsn-mascot__pupil wsn-mascot__pupil--left" cx="15" cy="18.5" r="1.3" fill="#000"/>
+          <circle class="wsn-mascot__pupil wsn-mascot__pupil--right" cx="25" cy="18.5" r="1.3" fill="#000"/>
+        </svg>
       </div>
       <span class="wsn-panel__title">Snabby</span>
       <button class="wsn-panel__close" title="Close">&times;</button>
     `;
     header.querySelector('.wsn-panel__close').addEventListener('click', closePanel);
+
+    // Start mascot animations
+    startMascotAnimation(header);
     panel.appendChild(header);
 
     if (!currentSession || currentSession.status === 'idle') {
@@ -1062,58 +1109,54 @@
         align-items: center;
         padding: 16px 20px 20px 20px;
         border-bottom: 1px solid #222;
-        gap: 10px;
+        gap: 12px;
         flex-shrink: 0;
       }
-      .wsn-header-icon {
-        width: 30px;
-        height: 30px;
-        background: transparent;
-        border-radius: 50%;
+      .wsn-header-logo {
+        width: 40px;
+        height: 40px;
         display: flex;
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        margin-right: 2px;
       }
-      .wsn-header-face {
-        width: 28px;
-        height: 28px;
-        background: #000;
-        border-radius: 50%;
-        position: relative;
-        border: 1px solid #333;
-        box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+      .wsn-mascot {
+        display: block;
+        animation: wsn-float 3s ease-in-out infinite;
+        transition: transform 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+        cursor: pointer;
       }
-      .wsn-header-eye {
-        width: 5px;      /* 18% of face diameter */
-        height: 5.9px;   /* 21% of face diameter - slightly vertical oval */
-        background: white;
-        border-radius: 50%;
-        position: absolute;
-        top: 50%;
-        transform: translateY(-50%);
-        display: flex;
-        align-items: center;
-        justify-content: center;
+      .wsn-mascot:hover {
+        transform: scale(1.08) translateY(-2px);
       }
-      .wsn-header-eye:first-child { left: calc(50% - 5px - 1.5px); }  /* centered spacing */
-      .wsn-header-eye:last-child { left: calc(50% + 1.5px); }
-      .wsn-header-pupil {
-        width: 2.2px;    /* 44% of white eye width */
-        height: 2.2px;
-        background: #000;
-        border-radius: 50%;
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
+      @keyframes wsn-float {
+        0%, 100% { transform: translateY(0px); }
+        50% { transform: translateY(-3px); }
+      }
+      .wsn-mascot__outer-ring {
+        transition: opacity 250ms ease, stroke-width 250ms ease;
+      }
+      .wsn-mascot:hover .wsn-mascot__outer-ring {
+        opacity: 0.6;
+        stroke-width: 2;
+      }
+      .wsn-mascot__face {
+        transition: transform 200ms ease;
+      }
+      .wsn-mascot__eye {
+        transition: transform 150ms ease;
+        transform-origin: center;
+      }
+      .wsn-mascot__pupil {
+        transition: opacity 150ms ease;
       }
       .wsn-panel__title {
         flex: 1;
-        font-size: 15px;
-        font-weight: 600;
+        font-size: 19px;
+        font-weight: 700;
         color: white;
+        letter-spacing: -0.02em;
+        text-shadow: 0 1px 2px rgba(0,0,0,0.3);
       }
       .wsn-panel__close {
         width: 28px;
@@ -1379,9 +1422,10 @@
       .wsn-session-info {
         margin: 16px 20px;
         padding: 16px;
-        background: #1A1A1A;
-        border: 1px solid #2A2A2A;
+        background: #000;
+        border: 1px solid #ffffff;
         border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       }
       .wsn-session-name {
         font-size: 15px;
@@ -1434,7 +1478,7 @@
       .wsn-btn--primary {
         width: 100%;
         padding: 14px 20px;
-        background: white;
+        background: #ffffff;
         border: none;
         color: black;
         font-size: 14px;
@@ -1445,24 +1489,37 @@
         align-items: center;
         justify-content: center;
         gap: 8px;
-        transition: all 150ms ease;
+        transition: all 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
         font-family: inherit;
+        box-shadow: 0 2px 8px rgba(255,255,255,0.2);
       }
-      .wsn-btn--primary:hover:not(:disabled) { background: #f0f0f0; transform: translateY(-1px); }
+      .wsn-btn--primary:hover:not(:disabled) { 
+        background: #ffffff;
+        transform: translateY(-2px); 
+        box-shadow: 0 4px 16px rgba(255,255,255,0.3);
+      }
+      .wsn-btn--primary:focus:not(:disabled) {
+        outline: 2px solid #ffffff;
+        outline-offset: 2px;
+      }
       .wsn-btn--primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
       .wsn-input {
-        background: #1A1A1A;
-        border: 1px solid #333;
+        background: #000;
+        border: 1px solid #ffffff;
         border-radius: 8px;
         padding: 10px 12px 10px 40px;
         color: white;
         font-size: 14px;
         outline: none;
-        transition: border-color 150ms ease;
+        transition: all 200ms ease;
         font-family: inherit;
         width: 100%;
       }
-      .wsn-input:focus { border-color: #555; }
+      .wsn-input:focus { 
+        border-color: #ffffff; 
+        border-width: 2px;
+        padding: 9px 11px 9px 39px;
+      }
       .wsn-input--error { border-color: #DC2626 !important; }
 
       /* ─── Mode Selection ─── */
@@ -1493,12 +1550,12 @@
         gap: 12px;
       }
       .wsn-mode-card {
-        background: transparent;
-        border: 1px solid #2A2A2A;
+        background: #000;
+        border: 1px solid #ffffff;
         border-radius: 12px;
         padding: 20px 16px;
         cursor: pointer;
-        transition: all 200ms ease;
+        transition: all 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -1507,23 +1564,36 @@
         font-family: inherit;
       }
       .wsn-mode-card:hover {
-        border-color: #3A3A3A;
-        background: rgba(255, 255, 255, 0.02);
+        border-width: 2px;
+        padding: 19px 15px;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 16px rgba(255, 255, 255, 0.15);
       }
       .wsn-mode-card--active {
-        border-color: #3d7bbf;
-        background: rgba(74, 144, 226, 0.03);
+        border-width: 2px;
+        padding: 19px 15px;
+        background: #ffffff;
+        color: #000;
+        box-shadow: 0 4px 20px rgba(255, 255, 255, 0.3);
+      }
+      .wsn-mode-card--active:hover {
+        box-shadow: 0 6px 24px rgba(255, 255, 255, 0.4);
       }
       .wsn-mode-card__icon {
         margin-bottom: 10px;
-        color: #666;
+        color: #ffffff;
+        transition: all 250ms ease;
       }
       .wsn-mode-card__icon svg {
         width: 45px;
         height: 45px;
+        transition: filter 250ms ease;
+      }
+      .wsn-mode-card:hover .wsn-mode-card__icon {
+        transform: scale(1.05);
       }
       .wsn-mode-card--active .wsn-mode-card__icon {
-        color: #4A90E2;
+        color: #000;
       }
       .wsn-mode-card__title {
         font-size: 14px;
@@ -1531,49 +1601,59 @@
         color: white;
         margin-bottom: 4px;
       }
+      .wsn-mode-card--active .wsn-mode-card__title {
+        color: #000;
+      }
       .wsn-mode-card__desc {
         font-size: 11px;
-        color: #777;
+        color: #ffffff;
+        opacity: 0.6;
         margin-bottom: 12px;
+      }
+      .wsn-mode-card--active .wsn-mode-card__desc {
+        color: #000;
+        opacity: 0.7;
       }
       .wsn-mode-card__radio {
         width: 16px;
         height: 16px;
-        border: 2px solid #3A3A3A;
+        border: 2px solid #ffffff;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
       }
       .wsn-mode-card--active .wsn-mode-card__radio {
-        border-color: #4A90E2;
+        border-color: #000;
+        background: #ffffff;
       }
       .wsn-mode-card--active .wsn-mode-card__radio::after {
         content: '';
         width: 8px;
         height: 8px;
-        background: #4A90E2;
+        background: #000;
         border-radius: 50%;
       }
       
       .wsn-hint {
         margin: 0 20px 24px 20px;
         padding: 10px 12px;
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.05);
+        background: #000;
+        border: 1px solid #ffffff;
         border-radius: 8px;
         display: flex;
         align-items: flex-start;
         gap: 8px;
         font-size: 11px;
-        color: #777;
+        color: #ffffff;
+        opacity: 0.8;
         line-height: 1.5;
       }
       .wsn-hint svg {
         flex-shrink: 0;
         width: 14px;
         height: 14px;
-        color: #555;
+        color: #ffffff;
         margin-top: 1px;
       }
 
