@@ -1,6 +1,9 @@
 # ─── Stage 1: Build ──────────────────────────
 FROM node:20-alpine AS builder
 
+# Sharp requires native libs on Alpine
+RUN apk add --no-cache libc6-compat
+
 WORKDIR /app
 
 COPY backend/package*.json ./
@@ -10,6 +13,9 @@ COPY backend/src ./src
 
 # ─── Stage 2: Production ────────────────────
 FROM node:20-alpine
+
+# Sharp runtime deps
+RUN apk add --no-cache libc6-compat
 
 RUN addgroup -S wsn && adduser -S wsn -G wsn
 

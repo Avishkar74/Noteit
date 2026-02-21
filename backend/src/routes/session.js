@@ -1,20 +1,22 @@
 /**
- * Snabbly – Session Routes
+ * Snabby – Session Routes
  * POST /api/session/create  → creates upload session, returns QR data
  * GET  /api/session/:id     → gets session info
+ * GET  /api/session/:id/valid → lightweight session validity check
  * DELETE /api/session/:id   → deletes session
  */
 
 const express = require('express');
 const QRCode = require('qrcode');
-const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining } = require('../services/session-store');
+const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining, isSessionValid, isUploadWindowOpen, markUploadsClosed } = require('../services/session-store');
 
 const router = express.Router();
 
 // Create a new upload session
 router.post('/create', async (req, res) => {
   try {
-    const result = createSession();
+    const sessionName = (req.body && req.body.name) || 'Phone Upload';
+    const result = createSession(sessionName);
 
     if (result.error) {
       return res.status(429).json({ error: result.error });
@@ -54,6 +56,7 @@ router.get('/:id', (req, res) => {
   res.json({
     imageCount: session.images.length,
     createdAt: session.createdAt,
+    uploadExpiresAt: session.uploadExpiresAt,
     daysRemaining,
   });
 });
@@ -95,6 +98,25 @@ router.get('/:id/search', (req, res) => {
   });
 
   res.json({ query, results, totalMatches: results.length });
+});
+
+// Lightweight session validity check (used by phone upload page)
+router.get('/:id/valid', (req, res) => {
+  const valid = isSessionValid(req.params.id);
+  const windowOpen = valid ? isUploadWindowOpen(req.params.id) : false;
+  res.json({ valid, uploadWindowOpen: windowOpen });
+});
+
+// Close uploads for a session (from extension when ending/stopping)
+// Session data persists but phone can no longer upload.
+router.post('/:id/close-uploads', (req, res) => {
+  markUploadsClosed(req.params.id);
+  // Notify phone via Socket.io for instant feedback
+  const io = req.app.get('io');
+  if (io) {
+    io.to(`session:${req.params.id}`).emit('uploads-closed');
+  }
+  res.json({ success: true });
 });
 
 // Get a specific uploaded image by index

@@ -119,7 +119,7 @@ describe('QR Upload Integration', () => {
       // Retrieve
       const getRes = await request(app).get(`/api/session/${sessionId}/images/0`);
       expect(getRes.status).toBe(200);
-      expect(getRes.body.dataUrl).toContain('data:image/png;base64,');
+      expect(getRes.body.dataUrl).toContain('data:image/jpeg;base64,');
       expect(getRes.body.index).toBe(0);
 
       store.deleteSession(sessionId);

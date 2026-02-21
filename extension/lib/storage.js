@@ -114,19 +114,37 @@ const StorageManager = (() => {
 
   // ─── Bulk Cleanup ────────────────────────────────
 
+  /**
+   * Remove all session data including orphaned screenshot keys.
+   * Ensures no stale data survives a session end or export.
+   */
   async function clearAllSessionData() {
     const session = await getSession();
+    const keysToRemove = [
+      WSN_CONSTANTS.STORAGE_KEYS.SESSION,
+      WSN_CONSTANTS.STORAGE_KEYS.UNDO_BUFFER,
+    ];
+
     if (session && session.screenshotIds) {
-      const keys = session.screenshotIds.map(id => screenshotKey(id));
-      keys.push(WSN_CONSTANTS.STORAGE_KEYS.SESSION);
-      keys.push(WSN_CONSTANTS.STORAGE_KEYS.UNDO_BUFFER);
-      await remove(keys);
-    } else {
-      await remove([
-        WSN_CONSTANTS.STORAGE_KEYS.SESSION,
-        WSN_CONSTANTS.STORAGE_KEYS.UNDO_BUFFER,
-      ]);
+      for (const id of session.screenshotIds) {
+        keysToRemove.push(screenshotKey(id));
+      }
     }
+
+    // Also scan for orphaned screenshot keys not in the session
+    try {
+      const all = await chrome.storage.local.get(null);
+      const prefix = WSN_CONSTANTS.STORAGE_KEYS.SCREENSHOT_PREFIX;
+      for (const key of Object.keys(all)) {
+        if (key.startsWith(prefix) && !keysToRemove.includes(key)) {
+          keysToRemove.push(key);
+        }
+      }
+    } catch (_) {
+      // Fallback: just remove known keys
+    }
+
+    await remove(keysToRemove);
   }
 
   return {

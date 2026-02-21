@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snabbly – Upload</title>
+  <title>Snabby – Upload</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -30,7 +30,41 @@
     .subtitle {
       font-size: 13px;
       color: #777;
-      margin-bottom: 32px;
+      margin-bottom: 16px;
+    }
+    /* Timer bar */
+    .timer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 10px 16px;
+      margin-bottom: 16px;
+      font-size: 14px;
+      font-weight: 600;
+      transition: border-color 0.3s, background 0.3s;
+    }
+    .timer-bar.warning {
+      border-color: #F59E0B;
+      background: rgba(245,158,11,0.08);
+    }
+    .timer-bar.expired {
+      border-color: #DC2626;
+      background: rgba(220,38,38,0.08);
+    }
+    .timer-icon { font-size: 16px; }
+    .timer-text { color: #fff; }
+    .timer-text .time { color: #22C55E; font-variant-numeric: tabular-nums; }
+    .timer-bar.warning .time { color: #F59E0B; }
+    .timer-bar.expired .time { color: #DC2626; }
+    /* Rate limit notice */
+    .rate-notice {
+      font-size: 11px;
+      color: #555;
+      margin-bottom: 20px;
     }
     .upload-area {
       border: 2px dashed #333;
@@ -80,25 +114,10 @@
     }
     .status--success { background: rgba(34,197,94,0.1); color: #22C55E; }
     .status--error { background: rgba(220,38,38,0.1); color: #DC2626; }
-    .logo-face {
-      width: 48px;
-      height: 48px;
-      background: white;
-      border-radius: 50%;
-      position: relative;
+    .status--warning { background: rgba(245,158,11,0.1); color: #F59E0B; }
+    .mascot-logo {
       margin: 0 auto 16px;
     }
-    .logo-eye {
-      width: 10px;
-      height: 12px;
-      background: #111;
-      border-radius: 50%;
-      position: absolute;
-      top: 48%;
-      transform: translateY(-50%);
-    }
-    .logo-eye:first-child { left: 26%; }
-    .logo-eye:last-child { right: 26%; }
     .upload-counter {
       background: rgba(255,255,255,0.05);
       border: 1px solid #333;
@@ -127,38 +146,81 @@
     .btn--secondary:hover {
       background: #222;
     }
+    /* Overlay states */
+    .overlay-msg {
+      display: none;
+      text-align: center;
+      padding: 40px 20px;
+    }
+    .overlay-msg.visible { display: block; }
+    .overlay-msg h2 { font-size: 18px; margin-bottom: 8px; }
+    .overlay-msg p { color: #777; font-size: 13px; line-height: 1.6; }
+    .overlay-msg .icon { font-size: 40px; margin-bottom: 16px; }
+    .upload-content { transition: opacity 0.3s; }
+    .upload-content.disabled { opacity: 0.4; pointer-events: none; }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="logo-face">
-      <div class="logo-eye"></div>
-      <div class="logo-eye"></div>
+    <!-- Mascot SVG matching extension branding -->
+    <div class="mascot-logo">
+      <svg viewBox="0 0 48 48" width="48" height="48">
+        <circle cx="24" cy="24" r="18" fill="#000" stroke="#ffffff" stroke-width="1.2"/>
+        <circle cx="24" cy="24" r="20" fill="none" stroke="#ffffff" stroke-width="1.5" opacity="0.3"/>
+        <ellipse cx="19" cy="22" rx="3.5" ry="4.2" fill="white"/>
+        <ellipse cx="29" cy="22" rx="3.5" ry="4.2" fill="white"/>
+        <circle cx="19" cy="22" r="1.5" fill="#000"/>
+        <circle cx="29" cy="22" r="1.5" fill="#000"/>
+      </svg>
     </div>
-    <h1>Snabbly</h1>
+    <h1>Snabby</h1>
     <p class="subtitle">Upload photos to your active session</p>
 
-    <div class="upload-area" id="dropZone">
-      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-        <path d="M24 8v24M16 16l8-8 8 8" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
-        <path d="M8 32v4a4 4 0 004 4h24a4 4 0 004-4v-4" stroke="#555" stroke-width="2" stroke-linecap="round"/>
-      </svg>
-      <p>Tap to choose from gallery</p>
-      <p class="hint">Multiple selection supported · JPG, PNG, WEBP · Max 10MB each</p>
+    <!-- Timer -->
+    <div class="timer-bar" id="timerBar">
+      <span class="timer-icon">⏱️</span>
+      <span class="timer-text">Time remaining: <span class="time" id="timerText">3:00</span></span>
     </div>
 
-    <input type="file" id="galleryInput" accept="image/jpeg,image/png,image/webp" multiple />
-    <input type="file" id="cameraInput" accept="image/jpeg,image/png,image/webp" capture="environment" />
+    <p class="rate-notice">Max 60 images per minute · JPG, PNG, WEBP · 10MB each</p>
 
-    <div class="btn-row">
-      <button class="btn" id="galleryBtn">🖼️ Gallery</button>
-      <button class="btn btn--secondary" id="cameraBtn">📷 Camera</button>
+    <!-- Session ended overlay -->
+    <div class="overlay-msg" id="sessionEnded">
+      <div class="icon">🔒</div>
+      <h2>Session Ended</h2>
+      <p>This upload session has been closed from the extension.<br>You can close this tab.</p>
     </div>
 
-    <div class="upload-counter" id="uploadCounter" style="display:none">
-      <span id="counterText">0</span> photo(s) uploaded
+    <!-- Upload window expired overlay -->
+    <div class="overlay-msg" id="windowExpired">
+      <div class="icon">⏰</div>
+      <h2>Upload Window Expired</h2>
+      <p>The 3-minute upload window has ended.<br>Scan the QR code again from the extension to continue uploading.</p>
     </div>
-    <div class="status" id="status" style="display:none"></div>
+
+    <div class="upload-content" id="uploadContent">
+      <div class="upload-area" id="dropZone">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <path d="M24 8v24M16 16l8-8 8 8" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+          <path d="M8 32v4a4 4 0 004 4h24a4 4 0 004-4v-4" stroke="#555" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <p>Tap to choose from gallery</p>
+        <p class="hint">Multiple selection supported</p>
+      </div>
+
+      <input type="file" id="galleryInput" accept="image/jpeg,image/png,image/webp" multiple />
+      <input type="file" id="cameraInput" accept="image/jpeg,image/png,image/webp" capture="environment" />
+
+      <div class="btn-row">
+        <button class="btn" id="galleryBtn">🖼️ Gallery</button>
+        <button class="btn btn--secondary" id="cameraBtn">📷 Camera</button>
+      </div>
+
+      <div class="upload-counter" id="uploadCounter" style="display:none">
+        <span id="counterText">0</span> photo(s) uploaded
+      </div>
+      <div class="status" id="status" style="display:none"></div>
+    </div>
   </div>
 
   <script>
@@ -173,7 +235,15 @@
     const uploadCounter = document.getElementById('uploadCounter');
     const counterText = document.getElementById('counterText');
     const status = document.getElementById('status');
+    const uploadContent = document.getElementById('uploadContent');
+    const sessionEnded = document.getElementById('sessionEnded');
+    const windowExpired = document.getElementById('windowExpired');
+    const timerBar = document.getElementById('timerBar');
+    const timerText = document.getElementById('timerText');
     let totalUploads = 0;
+    let sessionValid = true;
+    let uploadWindowOpen = true;
+    let uploadExpiresAt = Date.now() + 3 * 60 * 1000; // fallback
 
     dropZone.addEventListener('click', () => galleryInput.click());
     galleryBtn.addEventListener('click', () => galleryInput.click());
@@ -193,20 +263,38 @@
 
     async function handleFiles(e) {
       await handleFileList(e.target.files);
-      e.target.value = ''; // Reset for next selection
+      e.target.value = '';
     }
 
     async function handleFileList(fileList) {
       const files = Array.from(fileList);
       if (files.length === 0) return;
 
+      if (!uploadWindowOpen) {
+        showStatus('Upload window expired. Scan QR code again.', 'error');
+        return;
+      }
+
       for (let i = 0; i < files.length; i++) {
+        if (!sessionValid) {
+          showStatus('Session ended. Uploads disabled.', 'error');
+          return;
+        }
+        if (!uploadWindowOpen) {
+          showStatus('Upload window expired. Remaining images not uploaded.', 'warning');
+          return;
+        }
         showStatus(`Uploading ${i + 1} of ${files.length}...`, '');
         await uploadFile(files[i]);
       }
     }
 
     async function uploadFile(file) {
+      if (!sessionValid || !uploadWindowOpen) {
+        showStatus('Uploads disabled.', 'error');
+        return;
+      }
+
       if (file.size > 10 * 1024 * 1024) {
         showStatus('File too large. Max 10MB per photo.', 'error');
         return;
@@ -227,7 +315,15 @@
           updateCounter();
           showStatus(`✓ Uploaded! (${totalUploads} total)`, 'success');
         } else {
-          showStatus(data.error || 'Upload failed.', 'error');
+          if (res.status === 404) {
+            markSessionEnded();
+          } else if (res.status === 403 && data.error && data.error.includes('window expired')) {
+            markWindowExpired();
+          } else if (res.status === 429) {
+            showStatus('Rate limit reached (40/min). Wait a moment and try again.', 'warning');
+          } else {
+            showStatus(data.error || 'Upload failed.', 'error');
+          }
         }
       } catch {
         showStatus('Upload failed. Check your connection.', 'error');
@@ -245,6 +341,102 @@
       status.className = type ? `status status--${type}` : 'status';
       status.style.display = 'block';
     }
+
+    function markSessionEnded() {
+      sessionValid = false;
+      uploadContent.classList.add('disabled');
+      sessionEnded.classList.add('visible');
+      timerBar.style.display = 'none';
+      clearInterval(validityTimer);
+      clearInterval(countdownTimer);
+    }
+
+    function markWindowExpired() {
+      uploadWindowOpen = false;
+      uploadContent.classList.add('disabled');
+      windowExpired.classList.add('visible');
+      timerBar.classList.add('expired');
+      timerText.textContent = '0:00';
+      clearInterval(countdownTimer);
+    }
+
+    // Countdown timer
+    const countdownTimer = setInterval(() => {
+      const remaining = uploadExpiresAt - Date.now();
+      if (remaining <= 0) {
+        markWindowExpired();
+        return;
+      }
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      timerText.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+      // Warning when < 30 seconds
+      if (remaining < 30000) {
+        timerBar.classList.add('warning');
+      }
+    }, 1000);
+
+    // Poll session validity every 30 seconds (socket.io handles instant close events)
+    const validityTimer = setInterval(async () => {
+      if (!sessionValid) return;
+      try {
+        const res = await fetch(`/api/session/${sessionId}/valid`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.valid) {
+            markSessionEnded();
+          } else if (data.uploadWindowOpen === false) {
+            // Extension closed uploads (session still exists but uploads blocked)
+            markWindowExpired();
+          }
+        }
+      } catch { /* network error, retry next interval */ }
+    }, 30000);
+
+    // Socket.io for instant session-end notification
+    (function connectSocket() {
+      try {
+        const script = document.createElement('script');
+        script.src = '/socket.io/socket.io.js';
+        script.onload = function() {
+          try {
+            const socket = io({ query: { sessionId } });
+            socket.on('uploads-closed', () => {
+              markWindowExpired();
+            });
+          } catch(e) { /* Socket.io optional */ }
+        };
+        document.head.appendChild(script);
+      } catch(e) { /* Socket.io optional */ }
+    })();
+
+    // Fetch session info on load to get uploadExpiresAt
+    (async () => {
+      try {
+        const res = await fetch(`/api/session/${sessionId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.uploadExpiresAt) {
+            uploadExpiresAt = data.uploadExpiresAt;
+            // Check if already expired
+            if (Date.now() >= uploadExpiresAt) {
+              markWindowExpired();
+            }
+          }
+        } else {
+          markSessionEnded();
+        }
+      } catch { /* ignore */ }
+
+      // Also check validity
+      try {
+        const res = await fetch(`/api/session/${sessionId}/valid`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.valid) markSessionEnded();
+        }
+      } catch { /* ignore */ }
+    })();
   </script>
 </body>
 </html>

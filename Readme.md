@@ -23,7 +23,7 @@ Snabby is a Chromium browser extension that captures visible or selected portion
 | QR-based phone upload | ✅ Phase 3 |
 | Backend (Node.js + Socket.io) | ✅ Phase 3 |
 | Token-based upload authentication | ✅ Phase 3 |
-| Upload rate limiting (10/min) | ✅ Phase 3 |
+| Upload rate limiting (15/min) | ✅ Phase 3/6 |
 | Auto-cleanup of expired sessions (7 days) | ✅ Phase 3/5 |
 | File type/size validation (JPG/PNG/WEBP, 10MB) | ✅ Phase 3 |
 | Graceful error handling (backend down) | ✅ Phase 3 |
@@ -35,6 +35,13 @@ Snabby is a Chromium browser extension that captures visible or selected portion
 | OCR text extraction on upload (Tesseract.js) | ✅ Phase 5 |
 | Searchable/selectable text in exported PDFs | ✅ Phase 5 |
 | Text search across captures | ✅ Phase 5 |
+| EXIF auto-rotation (no more rotated phone photos) | ✅ Phase 6 |
+| Non-blocking OCR (instant upload response) | ✅ Phase 6 |
+| Session lifecycle fix (end session closes backend) | ✅ Phase 6 |
+| Phone page detects ended sessions | ✅ Phase 6 |
+| PDF generation optimized (batched operators) | ✅ Phase 6 |
+| Orphaned storage cleanup | ✅ Phase 6 |
+| Brand-consistent phone upload page | ✅ Phase 6 |
 
 ---
 

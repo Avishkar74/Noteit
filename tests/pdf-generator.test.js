@@ -202,4 +202,155 @@ describe('PdfGenerator', () => {
       expect(downloadCall.filename).toBe('CustomName.pdf');
     });
   });
+
+  // ─── JPEG Embedding ─────────────────────
+
+  describe('JPEG support', () => {
+    test('generates PDF from JPEG screenshots', async () => {
+      const screenshots = [{ dataUrl: createTestJpgDataUrl() }];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'JPEG Test');
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+      const header = String.fromCharCode(...pdfBytes.slice(0, 5));
+      expect(header).toBe('%PDF-');
+    });
+
+    test('decodes JPEG data URL with image/jpg', () => {
+      const dataUrl = 'data:image/jpg;base64,AQID';
+      const result = PdfGenerator._decodeDataUrl(dataUrl);
+      expect(result.mimeType).toBe('image/jpg');
+    });
+  });
+
+  // ─── OCR Text Layer ─────────────────────
+
+  describe('OCR text layer in generate', () => {
+    test('generates PDF with plain text OCR layer', async () => {
+      const screenshots = [{ dataUrl: createTestPngDataUrl() }];
+      const ocrTexts = [{ text: 'Hello World\nSecond line', words: [], imageWidth: 0, imageHeight: 0 }];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'OCR Test', null, ocrTexts);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+      const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+      expect(pdfDoc.getPageCount()).toBe(1);
+    });
+
+    test('generates PDF with word-level bbox OCR data', async () => {
+      const screenshots = [{ dataUrl: createTestPngDataUrl() }];
+      const ocrTexts = [{
+        text: 'Hello World',
+        words: [
+          { text: 'Hello', bbox: { x0: 10, y0: 5, x1: 80, y1: 25 } },
+          { text: 'World', bbox: { x0: 90, y0: 5, x1: 160, y1: 25 } },
+        ],
+        imageWidth: 200,
+        imageHeight: 200,
+      }];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'OCR Bbox', null, ocrTexts);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+      const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+      expect(pdfDoc.getPageCount()).toBe(1);
+    });
+
+    test('handles null ocrTexts entry gracefully', async () => {
+      const screenshots = [
+        { dataUrl: createTestPngDataUrl() },
+        { dataUrl: createTestPngDataUrl() },
+      ];
+      const ocrTexts = [null, { text: 'Page 2', words: [], imageWidth: 0, imageHeight: 0 }];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'Partial OCR', null, ocrTexts);
+      const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
+      expect(pdfDoc.getPageCount()).toBe(2);
+    });
+
+    test('drawOcrTextLayer returns early for null ocrData', () => {
+      // Should not throw
+      expect(() => PdfGenerator._drawOcrTextLayer(null, null, {}, {})).not.toThrow();
+    });
+
+    test('generates PDF with OCR data that overrides image dimensions', async () => {
+      const screenshots = [{ dataUrl: createTestPngDataUrl() }];
+      const ocrTexts = [{
+        text: 'Test',
+        words: [
+          { text: 'Test', bbox: { x0: 0, y0: 0, x1: 50, y1: 20 } },
+        ],
+        imageWidth: 999, // Different from actual - should be overridden
+        imageHeight: 999,
+      }];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'Override Dims', null, ocrTexts);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+    });
+
+    test('skips tiny bounding boxes', async () => {
+      const screenshots = [{ dataUrl: createTestPngDataUrl() }];
+      const ocrTexts = [{
+        text: 'x',
+        words: [
+          { text: 'x', bbox: { x0: 0, y0: 0, x1: 1, y1: 1 } }, // tiny, should skip
+          { text: 'Hello', bbox: { x0: 10, y0: 5, x1: 80, y1: 25 } },
+        ],
+        imageWidth: 200,
+        imageHeight: 200,
+      }];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'Skip Tiny', null, ocrTexts);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+    });
+
+    test('handles words with missing text or bbox', async () => {
+      const screenshots = [{ dataUrl: createTestPngDataUrl() }];
+      const ocrTexts = [{
+        text: 'Test',
+        words: [
+          { text: null, bbox: { x0: 0, y0: 0, x1: 50, y1: 20 } },
+          { text: 'OK', bbox: null },
+          { text: 'Valid', bbox: { x0: 10, y0: 5, x1: 80, y1: 25 } },
+        ],
+        imageWidth: 200,
+        imageHeight: 200,
+      }];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'Missing Data', null, ocrTexts);
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+    });
+  });
+
+  // ─── Error Handling ─────────────────────
+
+  describe('corrupt image handling', () => {
+    test('skips corrupt image and continues', async () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const screenshots = [
+        { dataUrl: 'data:image/png;base64,AAAA' }, // corrupt
+        { dataUrl: createTestPngDataUrl() },         // valid
+      ];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'Corrupt Test');
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+      // Should have warned about corrupt image
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping screenshot'));
+      warnSpy.mockRestore();
+    });
+
+    test('handles all corrupt images', async () => {
+      const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const screenshots = [
+        { dataUrl: 'data:image/png;base64,AAAA' },
+        { dataUrl: 'data:image/png;base64,BBBB' },
+      ];
+      const pdfBytes = await PdfGenerator.generate(screenshots, 'All Corrupt');
+      expect(pdfBytes).toBeInstanceOf(Uint8Array);
+      warnSpy.mockRestore();
+    });
+  });
+
+  // ─── exportSessionPdf with OCR ──────────
+
+  describe('exportSessionPdf with OCR texts', () => {
+    test('passes ocrTexts through to generate', async () => {
+      await SessionManager.startSession('OCR Export');
+      await SessionManager.addScreenshot(createTestPngDataUrl());
+
+      const ocrTexts = [{ text: 'Hello', words: [], imageWidth: 0, imageHeight: 0 }];
+      const result = await PdfGenerator.exportSessionPdf(null, ocrTexts);
+      expect(result.success).toBe(true);
+      expect(chrome.downloads.download).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -1,10 +1,12 @@
 /**
- * Snabbly – OCR Routes
+ * Snabby – OCR Routes
  * Endpoint for extracting text from images without storing them.
+ * Uses sharp for EXIF normalization before OCR.
  */
 
 const express = require('express');
 const multer = require('multer');
+const sharp = require('sharp');
 const { extractText, extractTextWithLayout } = require('../services/ocr-service');
 
 const router = express.Router();
@@ -91,30 +93,21 @@ router.post('/extract-base64-layout', express.json({ limit: '10mb' }), async (re
   }
 
   try {
-    const result = await extractTextWithLayout(image);
+    // Normalize EXIF orientation before OCR so bboxes match displayed image
+    const base64Data = image.split(',')[1];
+    const rawBuffer = Buffer.from(base64Data, 'base64');
+    const normalized = await sharp(rawBuffer)
+      .rotate()  // auto-rotate from EXIF
+      .toBuffer({ resolveWithObject: true });
 
-    // Get image dimensions from the base64 data
-    // Tesseract returns bbox in pixel coords relative to the source image
-    // We need the image size so the extension can scale bbox to PDF coords
-    let imgWidth = 0;
-    let imgHeight = 0;
-    try {
-      const sizeOf = require('image-size');
-      const base64Data = image.split(',')[1];
-      const buffer = Buffer.from(base64Data, 'base64');
-      const dimensions = sizeOf(buffer);
-      imgWidth = dimensions.width || 0;
-      imgHeight = dimensions.height || 0;
-    } catch {
-      // If image-size fails, set to 0; extension will fall back to plain text
-    }
+    const result = await extractTextWithLayout(normalized.data);
 
     res.json({
       text: result.text || '',
       confidence: result.confidence || 0,
       words: result.words || [],
-      imageWidth: imgWidth,
-      imageHeight: imgHeight,
+      imageWidth: normalized.info.width || 0,
+      imageHeight: normalized.info.height || 0,
     });
   } catch (err) {
     console.error('OCR layout extraction failed:', err);

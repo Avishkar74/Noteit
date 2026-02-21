@@ -122,6 +122,8 @@ const PdfGenerator = (() => {
    * Helvetica ascent ≈ 0.72 × fontSize  (718/1000 units).
    * We place the baseline so that the ascenders reach bbox-top and
    * descenders reach bbox-bottom.
+   *
+   * Performance: all operators batched into a single pushOperators call.
    */
   function drawWordsByBbox(page, words, imgW, imgH, dims, font) {
     // Scale factors: image pixels → PDF points
@@ -136,6 +138,9 @@ const PdfGenerator = (() => {
     const DESCENT = -207; // units below baseline (negative)
     const EM = ASCENT - DESCENT; // 925 units total
 
+    // Batch all operators for a single pushOperators call (major perf win)
+    const allOperators = [];
+
     for (const word of words) {
       if (!word.text || !word.bbox) continue;
 
@@ -145,15 +150,17 @@ const PdfGenerator = (() => {
       const wordHeightPdf = (y1 - y0) * scaleY;
       const wordWidthPdf = (x1 - x0) * scaleX;
 
-      // Skip tiny or invalid bounding boxes
-      if (wordHeightPdf < 2 || wordWidthPdf < 2) continue;
+      // Skip tiny or invalid bounding boxes (< 3pt = noise)
+      if (wordHeightPdf < 3 || wordWidthPdf < 3) continue;
+
+      // Skip single-char noise with low height
+      if (word.text.length <= 1 && wordHeightPdf < 6) continue;
 
       // Font size: scale so the full glyph height (ascent+|descent|) fits the bbox
       let fontSize = Math.max((wordHeightPdf / EM) * 1000, 4);
       fontSize = Math.min(fontSize, 72); // cap at reasonable max
 
       // Baseline offset from bbox top (in PDF points)
-      // ascent portion of the font at this fontSize
       const baselineFromTop = (ASCENT / 1000) * fontSize;
 
       // PDF X: straightforward horizontal mapping
@@ -161,43 +168,38 @@ const PdfGenerator = (() => {
 
       // PDF Y: convert bbox top (y0) from image coords to PDF coords,
       // then drop down by the ascent to reach the baseline.
-      // Image y0 → PDF top = dims.y + dims.height - y0 * scaleY
-      // Baseline sits ascent-distance below that top.
       const pdfY = dims.y + dims.height - y0 * scaleY - baselineFromTop;
 
       // Compute text width at this font size and scale horizontally to fit bbox
-      let hScale = 100; // percentage, 100 = normal
+      let hScale = 100;
       try {
         const textWidthAtSize = font.widthOfTextAtSize(word.text, fontSize);
         if (textWidthAtSize > 0) {
           hScale = (wordWidthPdf / textWidthAtSize) * 100;
-          hScale = Math.max(hScale, 20);  // don't squish below 20%
-          hScale = Math.min(hScale, 300); // don't stretch above 300%
+          hScale = Math.max(hScale, 20);
+          hScale = Math.min(hScale, 300);
         }
       } catch (e) {
-        console.warn('[OCR Debug] widthOfTextAtSize failed:', word.text, e.message);
+        // Skip word if width calc fails
+        continue;
       }
 
       try {
         const encodedText = font.encodeText(word.text);
 
-        // In debug mode: draw red bbox rectangle + visible red text
-        // In production: invisible text only (selectable but not visible)
-        const operators = [
-          PDFLib.pushGraphicsState(),
-        ];
+        allOperators.push(PDFLib.pushGraphicsState());
 
         if (DEBUG_OCR_LAYER) {
           // Draw word bounding box as a red rectangle (visual debug)
           const bboxBottom = dims.y + dims.height - y1 * scaleY;
-          operators.push(
+          allOperators.push(
             PDFLib.setStrokingRgbColor(1, 0, 0),
             PDFLib.setLineWidth(0.5),
             PDFLib.rectangle(pdfX, bboxBottom, wordWidthPdf, wordHeightPdf),
             PDFLib.stroke(),
           );
           // Red visible text
-          operators.push(
+          allOperators.push(
             PDFLib.beginText(),
             PDFLib.setFillingRgbColor(1, 0, 0),
             PDFLib.setTextRenderingMode(PDFLib.TextRenderingMode.Fill),
@@ -208,7 +210,7 @@ const PdfGenerator = (() => {
             PDFLib.endText(),
           );
         } else {
-          operators.push(
+          allOperators.push(
             PDFLib.beginText(),
             PDFLib.setTextRenderingMode(PDFLib.TextRenderingMode.Invisible),
             PDFLib.setFontAndSize(fontKey, fontSize),
@@ -219,11 +221,15 @@ const PdfGenerator = (() => {
           );
         }
 
-        operators.push(PDFLib.popGraphicsState());
-        page.pushOperators(...operators);
+        allOperators.push(PDFLib.popGraphicsState());
       } catch (e) {
-        console.warn('[OCR Debug] Word render failed:', word.text, e.message);
+        // Skip unencodable words silently
       }
+    }
+
+    // Single pushOperators call with all batched operators
+    if (allOperators.length > 0) {
+      page.pushOperators(...allOperators);
     }
   }
 
@@ -323,15 +329,6 @@ const PdfGenerator = (() => {
         // between what image-size reports and what pdf-lib actually embedded.
         // Both should be the same, but this guarantees correct coordinate mapping.
         if (ocrData.words && ocrData.words.length > 0) {
-          console.log(`[OCR Debug] Screenshot ${i + 1}:`,
-            `embedded=${imgWidth}x${imgHeight}`,
-            `ocr_reported=${ocrData.imageWidth}x${ocrData.imageHeight}`,
-            `words=${ocrData.words.length}`,
-            `dims={x:${dims.x.toFixed(1)}, y:${dims.y.toFixed(1)}, w:${dims.width.toFixed(1)}, h:${dims.height.toFixed(1)}}`,
-            `page=${pageWidth}x${pageHeight}`);
-          if (ocrData.words[0]) {
-            console.log(`[OCR Debug] First word:`, JSON.stringify(ocrData.words[0]));
-          }
           // Use the actual embedded image pixel dimensions for coordinate mapping
           ocrData.imageWidth = imgWidth;
           ocrData.imageHeight = imgHeight;
@@ -382,14 +379,17 @@ const PdfGenerator = (() => {
 
   /**
    * Convert Uint8Array to base64 string.
+   * Uses chunked approach to avoid stack overflow on large arrays.
    */
   function arrayBufferToBase64(uint8Array) {
-    let binary = '';
+    const CHUNK = 8192;
     const len = uint8Array.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(uint8Array[i]);
+    const parts = [];
+    for (let i = 0; i < len; i += CHUNK) {
+      const slice = uint8Array.subarray(i, Math.min(i + CHUNK, len));
+      parts.push(String.fromCharCode.apply(null, slice));
     }
-    return btoa(binary);
+    return btoa(parts.join(''));
   }
 
   return {

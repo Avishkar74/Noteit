@@ -1,5 +1,5 @@
 /**
- * Snabbly – Backend Server
+ * Snabby – Backend Server
  * Handles QR-based phone uploads via Express + Socket.io
  */
 
@@ -13,14 +13,11 @@ const path = require('path');
 const uploadRouter = require('./routes/upload');
 const sessionRouter = require('./routes/session');
 const ocrRouter = require('./routes/ocr');
-const { cleanupExpiredSessions, loadSessionsFromDisk } = require('./services/session-store');
+const { cleanupExpiredSessions } = require('./services/session-store');
 const { terminateWorker: terminateOcrWorker } = require('./services/ocr-service');
 
 const PORT = process.env.PORT || 3000;
 const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
-
-// Load persisted sessions from disk on startup
-loadSessionsFromDisk();
 
 const app = express();
 const server = http.createServer(app);
@@ -39,11 +36,18 @@ app.use(express.json({ limit: '12mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Rate limiting (skip in test environment)
+// This global limiter protects all /api/ routes except /api/upload/ which
+// has its own per-session rate limiter.
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 30,
+  max: 200,
   message: { error: 'Too many requests. Please try again later.' },
-  skip: () => process.env.NODE_ENV === 'test',
+  skip: (req) => {
+    if (process.env.NODE_ENV === 'test') return true;
+    // Skip global limiter for upload route — it has its own rate limiter
+    if (req.path.startsWith('/upload/')) return true;
+    return false;
+  },
 });
 app.use('/api/', limiter);
 
@@ -103,9 +107,9 @@ process.on('SIGINT', shutdown);
 if (process.env.NODE_ENV !== 'test') {
   server.listen(PORT, '0.0.0.0', () => {
     const baseUrl = process.env.BASE_URL || `http://localhost:${PORT}`;
-    console.log(`Snabbly backend running on port ${PORT}`);
+    console.log(`Snabby backend running on port ${PORT}`);
     console.log(`Upload URL: ${baseUrl}`);
-    console.log(`Access from phone: Ensure devices are on same Wi-Fi network`);
+    console.log(`Access from phone: ensure devices are on same network`);
   });
 }
 

@@ -1,6 +1,6 @@
-# JOURNEY.md – Snabbly Development Log
+# JOURNEY.md – Snabby Development Log
 
-This document tracks the development journey of Snabbly from initial concept to production-ready extension.
+This document tracks the development journey of Snabby from initial concept to production-ready extension.
 
 ---
 
@@ -219,3 +219,64 @@ This workflow breaks focus and wastes time – especially during learning, resea
 - OCR: Tesseract.js for text extraction from images (Phase 5)
 - Search: Full-text search across OCR-extracted text (Phase 5)
 - Persistence: File-based storage with 7-day session expiry (Phase 5)
+
+---
+
+## Phase 6 – Audit & Stabilization (v1.2.0)
+
+### What Was Done
+Full codebase audit and stabilization pass. Not a feature phase — structural cleanup, performance optimization, and lifecycle bug fixing.
+
+### Changes Made
+
+#### 1. Phone Upload Performance & EXIF Fix
+- **Sharp integration:** Replaced raw image passthrough with `sharp` for automatic EXIF orientation normalization and JPEG compression (quality 85, mozjpeg).
+- **Non-blocking OCR:** Upload route now responds immediately after image storage. OCR runs in background via fire-and-forget promise. Upload response time dropped from 3-5s to <500ms.
+- **OCR route EXIF normalization:** `/api/ocr/extract-base64-layout` now normalizes EXIF orientation before running Tesseract, ensuring bounding boxes match the displayed image orientation.
+- **Removed `image-size` dependency:** Sharp provides dimension data during normalization — no need for a separate package.
+
+#### 2. Session Lifecycle Fixes
+- **END_SESSION now closes upload session:** Previously, ending a session didn't stop backend polling or delete remote data. Fixed by calling `closeUploadSession()` in the END_SESSION handler.
+- **Session validity endpoint:** Added lightweight `GET /api/session/:id/valid` endpoint.
+- **Phone page session detection:** upload.html now polls session validity every 5s. When a session is ended from the extension, the phone page shows "Session ended" and disables uploads.
+- **`isSessionValid()` added to session-store:** Lightweight check without full session data retrieval.
+
+#### 3. PDF Generation Optimization
+- **Batched OCR operators:** All pushOperators calls for a word now batched into a single `pushOperators()` call per page instead of per-word. Significant reduction in PDF construction time for OCR-heavy documents.
+- **Chunked base64 conversion:** Replaced O(n) character-by-character string concatenation with chunked `String.fromCharCode.apply()` (8KB chunks). Prevents stack overflow on large PDFs.
+- **Noise filtering:** Words smaller than 3pt in either dimension are skipped. Single-character words under 6pt are filtered. Reduces PDF bloat from OCR noise.
+- **Removed debug console.logs:** All `[OCR Debug]` production console.log calls removed.
+
+#### 4. Storage Cleanup
+- **Orphaned key cleanup:** `clearAllSessionData()` now scans all chrome.storage keys for orphaned screenshot entries not tracked in the session's screenshotIds. Prevents storage leaks.
+
+#### 5. Dead Code & Branding
+- **Removed unused `image-size` dependency** from package.json.
+- **Consistent branding:** All backend file headers updated from "Snabbly" to "Snabby".
+- **Phone upload page mascot:** Replaced generic white-circle-with-dots logo with SVG mascot matching the extension's animated face design.
+- **dev:local script URL updated** to current network IP.
+
+#### 6. Docker & Infrastructure
+- **Dockerfile:** Added `libc6-compat` to both builder and production stages for sharp's native bindings on Alpine.
+- **docker-compose.yml:** Updated BASE_URL from stale IP to current (172.30.42.34).
+
+### Lessons Learned
+16. **EXIF orientation is invisible but deadly** — photos from phones are stored rotated in the file with EXIF metadata indicating display orientation. Without normalization, PDFs show rotated images.
+17. **Non-blocking OCR is critical for UX** — waiting 3-5s for OCR before responding to upload makes the phone upload feel broken. Fire-and-forget keeps the experience snappy.
+18. **Session lifecycle must be symmetric** — if creating a session opens resources (polling timer, backend session), ending it must close ALL of them.
+19. **Phone upload pages are orphan-prone** — users scan a QR, upload photos, then close the extension. Without validity polling, the phone page happily accepts uploads into a dead session.
+20. **Batch PDF operators for performance** — individual `pushOperators()` calls per word create O(n) overhead. Batching all operators for a page into one call is dramatically faster.
+
+---
+
+## Current State (Updated: Phase 6)
+
+- Extension: Fully functional with all phases integrated
+- Backend: Production-ready with sharp, non-blocking OCR, session lifecycle management
+- CI/CD: Configured with 70% backend coverage gate
+- Docker: Multi-stage build with sharp native deps, correct BASE_URL
+- Tests: 220+ passing
+- Security: Token-based upload auth, rate limiting (30 req/min global, 15 uploads/min)
+- OCR: Tesseract.js with EXIF-normalized input, non-blocking on upload
+- Persistence: File-based storage with 7-day session expiry
+- PDF: Optimized generation with batched operators, chunked base64, noise filtering

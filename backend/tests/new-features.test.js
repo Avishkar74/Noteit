@@ -238,13 +238,9 @@ describe('Search API', () => {
   });
 });
 
-describe('File-Based Storage', () => {
+describe('In-Memory Storage', () => {
   test('SESSION_EXPIRY_MS is 7 days', () => {
     expect(store.SESSION_EXPIRY_MS).toBe(7 * 24 * 60 * 60 * 1000);
-  });
-
-  test('loadSessionsFromDisk does not throw in test env', () => {
-    expect(() => store.loadSessionsFromDisk()).not.toThrow();
   });
 
   test('sessions have ocrTexts array', () => {

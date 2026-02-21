@@ -14,11 +14,14 @@ const WSN_CONSTANTS = {
   MEMORY_LIMIT: 200 * 1024 * 1024, // 200 MB
   MEMORY_WARNING_THRESHOLD: 0.8,    // 80%
 
+  // Upload window duration (how long phone can upload after QR scan)
+  UPLOAD_WINDOW_MS: 3 * 60 * 1000, // 3 minutes
+
   // Backend URL – set to your Railway deployment URL before publishing
   // For local development: 'http://localhost:3000'
-  // For network testing: 'http://10.124.115.34:3000'
+  // For network testing: 'http://172.30.42.34:3000'
   // For production: 'https://your-app.up.railway.app'
-  BACKEND_URL: 'http://10.124.115.34:3000',
+  BACKEND_URL: 'http://172.30.42.34:3000',
 
   // Session statuses
   STATUS: {
@@ -64,6 +67,8 @@ const WSN_CONSTANTS = {
     CREATE_UPLOAD_SESSION: 'CREATE_UPLOAD_SESSION',
     CLOSE_UPLOAD_SESSION: 'CLOSE_UPLOAD_SESSION',
     PHONE_IMAGE_RECEIVED: 'PHONE_IMAGE_RECEIVED',
+    STOP_UPLOAD_POLLING: 'STOP_UPLOAD_POLLING',
+    GET_UPLOAD_POLLING_STATE: 'GET_UPLOAD_POLLING_STATE',
 
     // Background → Content
     CAPTURE_COMPLETE: 'CAPTURE_COMPLETE',
@@ -73,6 +78,7 @@ const WSN_CONSTANTS = {
     ACTIVATION_CHANGED: 'ACTIVATION_CHANGED',
     SESSION_RESTORED: 'SESSION_RESTORED',
     EXPORT_PROGRESS: 'EXPORT_PROGRESS',
+    POLLING_STATE_CHANGED: 'POLLING_STATE_CHANGED',
   },
 
   // Undo timeout

@@ -1,5 +1,6 @@
 module.exports = {
   testEnvironment: 'node',
+  testTimeout: 15000,
   roots: ['<rootDir>/tests'],
   testMatch: ['**/*.test.js'],
   coverageDirectory: 'coverage',

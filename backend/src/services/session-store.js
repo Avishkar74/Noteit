@@ -1,111 +1,21 @@
 /**
- * Snabbly – File-Backed Session Store
- * Manages upload sessions with automatic expiration and disk persistence.
- * Sessions are kept in memory for fast access and persisted to JSON files on disk.
- * On server start, sessions are loaded from disk so data survives restarts.
+ * Snabby – In-Memory Session Store
+ * Manages upload sessions with automatic expiration.
+ * Sessions live only in memory – they reset when the server restarts.
  */
 
 const { v4: uuidv4 } = require('uuid');
-const fs = require('fs');
-const path = require('path');
 
 const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const UPLOAD_WINDOW_MS = 3 * 60 * 1000; // 3-minute upload window
 const MAX_SESSIONS = 100;
-
-// Data directory for persisted sessions
-const DATA_DIR = process.env.SESSION_DATA_DIR || path.join(__dirname, '..', '..', 'data', 'sessions');
 
 // In-memory store: sessionId → { token, createdAt, images[], ocrTexts[] }
 const sessions = new Map();
 
-// ─── Disk Persistence Helpers ───────────────────────
-
-/**
- * Ensure the data directory exists.
- */
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
-
-/**
- * Persist a single session to disk as a JSON file.
- * @param {string} sessionId
- */
-function persistSession(sessionId) {
-  // Skip disk writes in test environment
-  if (process.env.NODE_ENV === 'test') return;
-
-  const session = sessions.get(sessionId);
-  if (!session) return;
-
-  try {
-    ensureDataDir();
-    const filePath = path.join(DATA_DIR, `${sessionId}.json`);
-    fs.writeFileSync(filePath, JSON.stringify(session), 'utf8');
-  } catch (err) {
-    console.error(`Failed to persist session ${sessionId}:`, err.message);
-  }
-}
-
-/**
- * Remove a session file from disk.
- * @param {string} sessionId
- */
-function removeSessionFile(sessionId) {
-  if (process.env.NODE_ENV === 'test') return;
-
-  try {
-    const filePath = path.join(DATA_DIR, `${sessionId}.json`);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-    }
-  } catch (err) {
-    console.error(`Failed to remove session file ${sessionId}:`, err.message);
-  }
-}
-
-/**
- * Load all sessions from disk into memory on startup.
- * Expired sessions are cleaned up during load.
- */
-function loadSessionsFromDisk() {
-  if (process.env.NODE_ENV === 'test') return;
-
-  try {
-    ensureDataDir();
-    const files = fs.readdirSync(DATA_DIR).filter(f => f.endsWith('.json'));
-    const now = Date.now();
-
-    for (const file of files) {
-      try {
-        const filePath = path.join(DATA_DIR, file);
-        const raw = fs.readFileSync(filePath, 'utf8');
-        const session = JSON.parse(raw);
-        const sessionId = file.replace('.json', '');
-
-        // Skip expired sessions
-        if (now - session.createdAt > SESSION_EXPIRY_MS) {
-          fs.unlinkSync(filePath);
-          continue;
-        }
-
-        sessions.set(sessionId, session);
-      } catch (err) {
-        console.error(`Failed to load session from ${file}:`, err.message);
-      }
-    }
-
-    console.log(`Loaded ${sessions.size} session(s) from disk.`);
-  } catch (err) {
-    console.error('Failed to load sessions from disk:', err.message);
-  }
-}
-
 // ─── Session CRUD ───────────────────────────────────
 
-function createSession() {
+function createSession(name) {
   if (sessions.size >= MAX_SESSIONS) {
     cleanupExpiredSessions();
     if (sessions.size >= MAX_SESSIONS) {
@@ -115,15 +25,17 @@ function createSession() {
 
   const sessionId = uuidv4();
   const token = uuidv4();
+  const now = Date.now();
 
   sessions.set(sessionId, {
     token,
-    createdAt: Date.now(),
+    name: name || 'Untitled',
+    createdAt: now,
+    uploadExpiresAt: now + UPLOAD_WINDOW_MS,
     images: [],
-    ocrTexts: [], // OCR text for each image (parallel array)
+    ocrTexts: [],
   });
 
-  persistSession(sessionId);
   return { sessionId, token };
 }
 
@@ -134,7 +46,6 @@ function getSession(sessionId) {
   // Check expiry
   if (Date.now() - session.createdAt > SESSION_EXPIRY_MS) {
     sessions.delete(sessionId);
-    removeSessionFile(sessionId);
     return null;
   }
 
@@ -161,7 +72,6 @@ function addImage(sessionId, imageData, ocrText) {
   if (!session.ocrTexts) session.ocrTexts = [];
   session.ocrTexts.push(ocrText || '');
 
-  persistSession(sessionId);
   return { success: true, imageCount: session.images.length };
 }
 
@@ -179,7 +89,16 @@ function getOcrTexts(sessionId) {
 
 function deleteSession(sessionId) {
   sessions.delete(sessionId);
-  removeSessionFile(sessionId);
+}
+
+/**
+ * Check if a session exists and is still valid (not expired).
+ * Used by the phone upload page to detect ended sessions.
+ * @param {string} sessionId
+ * @returns {boolean}
+ */
+function isSessionValid(sessionId) {
+  return getSession(sessionId) !== null;
 }
 
 function cleanupExpiredSessions() {
@@ -187,7 +106,6 @@ function cleanupExpiredSessions() {
   for (const [id, session] of sessions) {
     if (now - session.createdAt > SESSION_EXPIRY_MS) {
       sessions.delete(id);
-      removeSessionFile(id);
     }
   }
 }
@@ -209,6 +127,32 @@ function getDaysRemaining(sessionId) {
   return Math.max(0, Math.ceil(remaining / (24 * 60 * 60 * 1000)));
 }
 
+/**
+ * Check if the 3-minute upload window is still open.
+ * Also returns false if uploads were explicitly closed from the extension.
+ * @param {string} sessionId
+ * @returns {boolean}
+ */
+function isUploadWindowOpen(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return false;
+  if (session.uploadsClosed) return false;
+  const expiresAt = session.uploadExpiresAt || (session.createdAt + UPLOAD_WINDOW_MS);
+  return Date.now() < expiresAt;
+}
+
+/**
+ * Mark a session's upload window as closed (from the extension).
+ * The session data persists but no more uploads are accepted.
+ * Phone page polls for this and shows "Session Ended" overlay.
+ * @param {string} sessionId
+ */
+function markUploadsClosed(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return;
+  session.uploadsClosed = true;
+}
+
 module.exports = {
   createSession,
   getSession,
@@ -217,9 +161,12 @@ module.exports = {
   getImages,
   getOcrTexts,
   deleteSession,
+  isSessionValid,
+  isUploadWindowOpen,
+  markUploadsClosed,
   cleanupExpiredSessions,
   getSessionCount,
-  loadSessionsFromDisk,
   getDaysRemaining,
   SESSION_EXPIRY_MS,
+  UPLOAD_WINDOW_MS,
 };

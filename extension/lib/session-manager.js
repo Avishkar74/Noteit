@@ -28,13 +28,23 @@ const SessionManager = (() => {
     return Math.ceil(base64.length * 0.75);
   }
 
+  // OCR queue: serializes background OCR requests so the backend's single
+  // Tesseract worker processes them one at a time instead of being overwhelmed
+  // by parallel requests that all timeout.
+  let ocrQueue = Promise.resolve();
+
   /**
    * Extract OCR text from a screenshot and update storage.
    * Non-blocking: runs in background after screenshot is saved.
+   * Serialized via ocrQueue to avoid overwhelming the backend.
    * @param {string} screenshotId 
    * @param {string} dataUrl 
    */
-  async function extractOcrText(screenshotId, dataUrl) {
+  function extractOcrText(screenshotId, dataUrl) {
+    ocrQueue = ocrQueue.then(() => _doOcrExtract(screenshotId, dataUrl)).catch(() => {});
+  }
+
+  async function _doOcrExtract(screenshotId, dataUrl) {
     const backendUrl = WSN_CONSTANTS.BACKEND_URL;
     if (!backendUrl) return; // Backend not configured
 
@@ -54,6 +64,12 @@ const SessionManager = (() => {
 
       if (!response.ok) {
         console.warn('Snabby: OCR endpoint returned', response.status);
+        // Mark as attempted so we don't re-try at export time
+        const screenshot = await StorageManager.getScreenshot(screenshotId);
+        if (screenshot) {
+          screenshot.ocrAttempted = true;
+          await StorageManager.saveScreenshot(screenshotId, screenshot);
+        }
         return;
       }
 
@@ -66,11 +82,20 @@ const SessionManager = (() => {
         screenshot.ocrWords = result.words || [];
         screenshot.ocrImageWidth = result.imageWidth || 0;
         screenshot.ocrImageHeight = result.imageHeight || 0;
+        screenshot.ocrAttempted = true;
         await StorageManager.saveScreenshot(screenshotId, screenshot);
       }
     } catch (err) {
       // Silent fail – OCR is a nice-to-have, not required
       console.warn('Snabby: OCR extraction failed', err.message);
+      // Mark as attempted to avoid retry storm at export
+      try {
+        const screenshot = await StorageManager.getScreenshot(screenshotId);
+        if (screenshot) {
+          screenshot.ocrAttempted = true;
+          await StorageManager.saveScreenshot(screenshotId, screenshot);
+        }
+      } catch (_) {}
     }
   }
 
@@ -173,10 +198,9 @@ const SessionManager = (() => {
     session.memoryUsage += size;
     await StorageManager.saveSession(session);
 
-    // Extract OCR text asynchronously (non-blocking)
-    extractOcrText(screenshotId, dataUrl).catch(err => {
-      console.warn('Snabby: OCR extraction failed for screenshot', screenshotId, err);
-    });
+    // Extract OCR text asynchronously (non-blocking).
+    // extractOcrText queues work internally and handles its own errors — do NOT chain .catch() on it.
+    extractOcrText(screenshotId, dataUrl);
 
     const warningThreshold = MEMORY_LIMIT * MEMORY_WARNING_THRESHOLD;
     const warning = session.memoryUsage > warningThreshold ? 'MEMORY_WARNING' : null;

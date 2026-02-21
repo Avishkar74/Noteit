@@ -70,6 +70,8 @@
     CREATE_UPLOAD_SESSION: 'CREATE_UPLOAD_SESSION',
     CLOSE_UPLOAD_SESSION: 'CLOSE_UPLOAD_SESSION',
     PHONE_IMAGE_RECEIVED: 'PHONE_IMAGE_RECEIVED',
+    STOP_UPLOAD_POLLING: 'STOP_UPLOAD_POLLING',
+    GET_UPLOAD_POLLING_STATE: 'GET_UPLOAD_POLLING_STATE',
     CAPTURE_COMPLETE: 'CAPTURE_COMPLETE',
     START_REGION_SELECT: 'START_REGION_SELECT',
     SESSION_UPDATED: 'SESSION_UPDATED',
@@ -77,6 +79,7 @@
     ACTIVATION_CHANGED: 'ACTIVATION_CHANGED',
     SESSION_RESTORED: 'SESSION_RESTORED',
     EXPORT_PROGRESS: 'EXPORT_PROGRESS',
+    POLLING_STATE_CHANGED: 'POLLING_STATE_CHANGED',
   };
 
   // ─── State ────────────────────────────────────
@@ -84,6 +87,13 @@
   let panelOpen = false;
   let currentSession = null;
   let currentSettings = null;
+  let phoneImageDebounceTimer = null;
+  let isReceivingImages = false;
+  let isUploadPolling = false;
+  let uploadExpiresAt = null;
+  let refreshGeneration = 0; // incremented each time refreshPanelContent is called; stale calls abort
+  let pollingCountdownTimer = null;
+  let isExporting = false;
 
   // ─── Shadow DOM Host ──────────────────────────
   const host = document.createElement('div');
@@ -127,6 +137,26 @@
     `;
     icon.title = 'Snabby';
     icon.style.display = 'none';
+
+    // Blink function for floating icon
+    icon.blink = function() {
+      const leftEye = icon.querySelector('.wsn-eye--left');
+      const rightEye = icon.querySelector('.wsn-eye--right');
+      const leftPupil = leftEye?.querySelector('.wsn-pupil');
+      const rightPupil = rightEye?.querySelector('.wsn-pupil');
+      if (leftEye && rightEye && leftPupil && rightPupil) {
+        leftEye.style.transform = 'scaleY(0.1)';
+        rightEye.style.transform = 'scaleY(0.1)';
+        leftPupil.style.opacity = '0';
+        rightPupil.style.opacity = '0';
+        setTimeout(() => {
+          leftEye.style.transform = 'scaleY(1)';
+          rightEye.style.transform = 'scaleY(1)';
+          leftPupil.style.opacity = '1';
+          rightPupil.style.opacity = '1';
+        }, 150);
+      }
+    };
 
     // ─── Drag support ───
     let isDragging = false;
@@ -212,6 +242,8 @@
     const el = document.createElement('div');
     el.className = 'wsn-panel';
     el.style.display = 'none';
+    el.style.transition = 'right 350ms cubic-bezier(0.4,0,0.2,1), opacity 250ms cubic-bezier(0.4,0,0.2,1)';
+    el.style.opacity = '0';
     return el;
   }
 
@@ -239,24 +271,31 @@
     await refreshPanelContent();
     backdrop.style.display = 'block';
     panel.style.display = 'flex';
-    
-    // Trigger animations
-    requestAnimationFrame(() => {
-      panel.classList.add('wsn-panel--open');
-    });
+    // Always reset opacity for smooth transition
+    panel.style.opacity = '0';
+    // Force reflow to ensure transition applies every time
+    void panel.offsetWidth;
+    panel.classList.add('wsn-panel--open');
+    panel.style.opacity = '1';
   }
 
   function closePanel() {
     panelOpen = false;
+    qrModalOpen = false;
     panel.classList.remove('wsn-panel--open');
-    
+    panel.style.opacity = '0';
+    // Force reflow to ensure transition applies every time
+    void panel.offsetWidth;
     // Hide after animation completes
     setTimeout(() => {
       if (!panelOpen) {
         backdrop.style.display = 'none';
         panel.style.display = 'none';
+        // Reset for next open
+        panel.classList.remove('wsn-panel--open');
+        panel.style.opacity = '0';
       }
-    }, 200);
+    }, 350);
   }
 
   function startMascotAnimation(header) {
@@ -291,7 +330,9 @@
   }
 
   async function refreshPanelContent() {
+    const myGen = ++refreshGeneration;
     const state = await sendMessage({ type: MSG.GET_SESSION });
+    if (myGen !== refreshGeneration) return; // a newer refresh was triggered; bail out
     currentSession = state.session;
     currentSettings = state.settings;
 
@@ -333,7 +374,7 @@
     panel.appendChild(header);
 
     if (!currentSession || currentSession.status === 'idle') {
-      renderStartView();
+      await renderStartView();
     } else {
       await renderActiveView();
     }
@@ -341,11 +382,13 @@
 
   // ─── Start View (No active session) ────────
 
-  function renderStartView() {
+  async function renderStartView() {
     const view = el('div', 'wsn-panel__body');
     const defaultMode = currentSettings?.captureMode || 'visible';
 
-    view.innerHTML = `
+    // Create scroll area for start view
+    const scrollArea = el('div', 'wsn-scroll-area');
+    scrollArea.innerHTML = `
       <div class="wsn-session-info">
         <div class="wsn-session-name">Start a New Session</div>
         <div class="wsn-session-meta">
@@ -391,13 +434,15 @@
       </div>
     `;
 
-    const input = view.querySelector('.wsn-input');
-    const btn = view.querySelector('.wsn-btn--primary');
-    const modeCards = view.querySelectorAll('.wsn-mode-card');
+    const input = scrollArea.querySelector('.wsn-input');
+    const btn = scrollArea.querySelector('.wsn-btn--primary');
+    const modeCards = scrollArea.querySelectorAll('.wsn-mode-card');
     let selectedMode = defaultMode;
 
     // Prevent page-level hotkeys (e.g., YouTube captions) while typing the session name
     const stopKeyEvent = (e) => {
+      // Allow Enter to reach the session-start handler below
+      if (e.key === 'Enter') return;
       e.stopPropagation();
       if (typeof e.stopImmediatePropagation === 'function') {
         e.stopImmediatePropagation();
@@ -406,6 +451,13 @@
     input.addEventListener('keydown', stopKeyEvent, true);
     input.addEventListener('keypress', stopKeyEvent, true);
     input.addEventListener('keyup', stopKeyEvent, true);
+
+    // Start session on Enter key
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        btn.click();
+      }
+    });
 
     // Mode selection
     modeCards.forEach(card => {
@@ -447,11 +499,10 @@
       }
     });
 
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') btn.click();
-      input.classList.remove('wsn-input--error');
-    });
+    // Remove error styling on input change
+    input.addEventListener('input', () => input.classList.remove('wsn-input--error'));
 
+    view.appendChild(scrollArea);
     panel.appendChild(view);
   }
 
@@ -490,10 +541,20 @@
   async function renderActiveView() {
     const session = currentSession;
     const settings = currentSettings;
+    const myGen = refreshGeneration; // snapshot; if a newer refresh starts, we abort
+
+    // Query polling state from service worker
+    const pollingState = await sendMessage({ type: MSG.GET_UPLOAD_POLLING_STATE });
+    if (myGen !== refreshGeneration) return; // superseded — don't touch the panel
+    isUploadPolling = pollingState.isPolling || false;
+    uploadExpiresAt = pollingState.uploadExpiresAt || null;
 
     const view = el('div', 'wsn-panel__body');
 
+    const exportDisabled = session.screenshotCount === 0 || isUploadPolling || isReceivingImages || isExporting;
+
     view.innerHTML = `
+
       <!-- Static top section -->
       <div class="wsn-static-top">
         <div class="wsn-session-bar">
@@ -504,6 +565,16 @@
           <button class="wsn-session-bar__delete" data-action="end-session" title="End session">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
           </button>
+        </div>
+
+        <!-- Polling indicator (phone upload active) -->
+        <div class="wsn-polling-bar ${isUploadPolling ? '' : 'wsn-polling-bar--hidden'}" id="wsn-polling-bar">
+          <div class="wsn-polling-bar__info">
+            <div class="wsn-polling-dot"></div>
+            <span class="wsn-polling-bar__text">Phone uploading</span>
+            <span class="wsn-polling-bar__timer" id="wsn-polling-timer"></span>
+          </div>
+          <button class="wsn-polling-bar__stop" data-action="stop-polling" title="Stop phone upload">Stop</button>
         </div>
 
         <div class="wsn-controls-bar">
@@ -537,7 +608,7 @@
 
       <!-- Static footer -->
       <div class="wsn-footer">
-        <button class="wsn-btn--download" data-action="export" ${session.screenshotCount === 0 ? 'disabled' : ''}>Download PDF</button>
+        <button class="wsn-btn--download" data-action="export" ${exportDisabled ? 'disabled' : ''}>${isExporting ? 'Generating...' : isUploadPolling ? 'Stop polling to export' : 'Download PDF'}</button>
       </div>
     `;
 
@@ -558,23 +629,67 @@
         const confirmed = confirm('End session? Unsaved captures will be lost.');
         if (!confirmed) return;
       }
+      clearInterval(pollingCountdownTimer);
+      pollingCountdownTimer = null;
       await sendMessage({ type: MSG.END_SESSION });
-      // Session ended silently
+      isUploadPolling = false;
+      uploadExpiresAt = null;
       await refreshPanelContent();
     });
 
+    // Stop polling button
+    view.querySelector('[data-action="stop-polling"]')?.addEventListener('click', async () => {
+      await sendMessage({ type: MSG.STOP_UPLOAD_POLLING });
+      isUploadPolling = false;
+      clearInterval(pollingCountdownTimer);
+      pollingCountdownTimer = null;
+      await refreshPanelContent();
+    });
+
+    // Start polling countdown timer if polling is active
+    if (isUploadPolling && uploadExpiresAt) {
+      startPollingCountdown(view);
+    }
+
     // Export
     view.querySelector('[data-action="export"]')?.addEventListener('click', async () => {
+      if (isExporting) return; // Already exporting — ignore duplicate clicks
+      if (isUploadPolling) {
+        showToast('Stop phone upload polling before exporting PDF.', 'warning');
+        return;
+      }
+      if (isReceivingImages) {
+        showToast('Wait for all images to finish loading...', 'warning');
+        return;
+      }
+      isExporting = true;
       const btn = view.querySelector('[data-action="export"]');
       btn.disabled = true;
       btn.textContent = 'Generating...';
 
-      const result = await sendMessage({ type: MSG.EXPORT_PDF });
-      if (result.success) {
-        // PDF exported silently
-        await refreshPanelContent();
-      } else {
-        // Export failed silently
+      // Show extra message while generating PDF
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'wsn-export-hint';
+      msgDiv.textContent = 'This might take a minute...';
+
+      btn.parentElement.appendChild(msgDiv);
+
+      try {
+        const result = await sendMessage({ type: MSG.EXPORT_PDF });
+        if (result.success) {
+          showToast('PDF downloaded successfully', 'success');
+          isExporting = false;
+          await refreshPanelContent();
+        } else {
+          const errMsg = result.message || 'Failed to export PDF';
+          showToast(errMsg, 'error');
+          isExporting = false;
+          btn.disabled = false;
+          btn.textContent = 'Download PDF';
+        }
+      } catch (e) {
+        showToast('PDF export failed unexpectedly.', 'error');
+        isExporting = false;
         btn.disabled = false;
         btn.textContent = 'Download PDF';
       }
@@ -585,6 +700,7 @@
       await showQrUploadModal();
     });
 
+    if (myGen !== refreshGeneration) return; // superseded while attaching listeners
     panel.appendChild(view);
 
     // Load thumbnails
@@ -594,6 +710,7 @@
   // ─── QR Upload Modal ──────────────────────
 
   let qrKeepAlivePort = null;
+  let qrModalOpen = false;
 
   async function showQrUploadModal() {
     const overlay = el('div', 'wsn-modal-overlay');
@@ -618,24 +735,28 @@
       </div>
     `;
 
+    qrModalOpen = true;
+
     const closeBtn = overlay.querySelector('[data-action="close-qr"]');
     closeBtn.addEventListener('click', async () => {
-      await sendMessage({ type: MSG.CLOSE_UPLOAD_SESSION });
-      if (qrKeepAlivePort) {
-        qrKeepAlivePort.disconnect();
-        qrKeepAlivePort = null;
-      }
+      // Just close the modal — polling continues in background.
+      // Polling indicator shows in active view; user can stop from there.
+      qrModalOpen = false;
       overlay.remove();
+      // Refresh panel to show polling indicator
+      if (panelOpen) await refreshPanelContent();
     });
 
     panel.appendChild(overlay);
 
     // Open keep-alive port so the service worker stays awake for polling
-    try {
-      qrKeepAlivePort = chrome.runtime.connect({ name: 'qr-upload-keepalive' });
-      qrKeepAlivePort.onDisconnect.addListener(() => { qrKeepAlivePort = null; });
-    } catch (_) {
-      // If context is dead, port will fail — that's fine
+    if (!qrKeepAlivePort) {
+      try {
+        qrKeepAlivePort = chrome.runtime.connect({ name: 'qr-upload-keepalive' });
+        qrKeepAlivePort.onDisconnect.addListener(() => { qrKeepAlivePort = null; });
+      } catch (_) {
+        // If context is dead, port will fail — that's fine
+      }
     }
 
     // Request QR from backend via service worker
@@ -658,6 +779,34 @@
       content.style.display = 'flex';
       content.querySelector('.wsn-qr-image').src = result.qrCode;
     }
+  }
+
+  /**
+   * Start a live countdown timer in the polling indicator bar.
+   * Shows remaining time until the 3-minute upload window expires.
+   */
+  function startPollingCountdown(view) {
+    clearInterval(pollingCountdownTimer);
+    const timerEl = view.querySelector('#wsn-polling-timer');
+    if (!timerEl || !uploadExpiresAt) return;
+
+    function updateTimer() {
+      const remaining = uploadExpiresAt - Date.now();
+      if (remaining <= 0) {
+        timerEl.textContent = 'expired';
+        clearInterval(pollingCountdownTimer);
+        pollingCountdownTimer = null;
+        // Polling will auto-stop via service worker; refresh to update UI
+        isUploadPolling = false;
+        if (panelOpen) refreshPanelContent();
+        return;
+      }
+      const mins = Math.floor(remaining / 60000);
+      const secs = Math.floor((remaining % 60000) / 1000);
+      timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+    updateTimer();
+    pollingCountdownTimer = setInterval(updateTimer, 1000);
   }
 
   async function loadThumbnails() {
@@ -929,6 +1078,9 @@
 
       case MSG.CAPTURE_COMPLETE:
         // Screenshot captured silently
+        if (floatingIcon && typeof floatingIcon.blink === 'function') {
+          floatingIcon.blink();
+        }
         if (message.warning === 'MEMORY_WARNING') {
           // Memory warning also silent
         }
@@ -936,12 +1088,22 @@
         break;
 
       case MSG.PHONE_IMAGE_RECEIVED:
-        // Phone upload received silently
+        // Phone upload received – debounce panel refresh to avoid rapid re-renders
+        isReceivingImages = true;
         if (panelOpen) {
           // Update QR status text if visible
           const qrStatus = shadow.querySelector('.wsn-qr-status');
-          if (qrStatus) qrStatus.textContent = `${message.count} image(s) received`;
-          refreshPanelContent();
+          if (qrStatus) qrStatus.textContent = `${message.count} image(s) received from phone`;
+          clearTimeout(phoneImageDebounceTimer);
+          phoneImageDebounceTimer = setTimeout(() => {
+            isReceivingImages = false;
+            // Don't wipe the panel while the QR modal is still open
+            if (!qrModalOpen) refreshPanelContent();
+          }, 500);
+        } else {
+          // Panel closed, just reset flag after a short delay
+          clearTimeout(phoneImageDebounceTimer);
+          phoneImageDebounceTimer = setTimeout(() => { isReceivingImages = false; }, 500);
         }
         break;
 
@@ -951,6 +1113,23 @@
 
       case MSG.SHOW_TOAST:
         showToast(message.message, message.variant || 'info');
+        break;
+
+      case MSG.POLLING_STATE_CHANGED:
+        isUploadPolling = message.isPolling;
+        uploadExpiresAt = message.uploadExpiresAt || null;
+        if (!isUploadPolling) {
+          // Polling stopped — clean up countdown and keep-alive
+          clearInterval(pollingCountdownTimer);
+          pollingCountdownTimer = null;
+          if (qrKeepAlivePort) {
+            qrKeepAlivePort.disconnect();
+            qrKeepAlivePort = null;
+          }
+        }
+        // Don't refresh while the QR modal is open — it would destroy the modal.
+        // The panel will refresh when the user closes the QR modal.
+        if (panelOpen && !qrModalOpen) refreshPanelContent();
         break;
       }
     });
@@ -995,6 +1174,17 @@
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  function getTimeAgo(timestamp) {
+    const diff = Date.now() - timestamp;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
   }
 
   // ═══════════════════════════════════════════════
@@ -1226,6 +1416,64 @@
       }
       .wsn-session-bar__delete:hover { color: #DC2626; border-color: #DC2626; background: #ffffff; }
 
+      /* Polling indicator bar */
+      .wsn-polling-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 20px;
+        background: rgba(34, 197, 94, 0.08);
+        border-bottom: 1px solid rgba(34, 197, 94, 0.25);
+        gap: 8px;
+        animation: wsn-polling-fade-in 200ms ease;
+      }
+      .wsn-polling-bar--hidden { display: none; }
+      @keyframes wsn-polling-fade-in {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .wsn-polling-bar__info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: #22C55E;
+        font-weight: 500;
+      }
+      .wsn-polling-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22C55E;
+        animation: wsn-polling-pulse 1.5s ease-in-out infinite;
+      }
+      @keyframes wsn-polling-pulse {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
+      }
+      .wsn-polling-bar__text { color: #22C55E; }
+      .wsn-polling-bar__timer {
+        color: #ffffff;
+        font-variant-numeric: tabular-nums;
+        opacity: 0.8;
+      }
+      .wsn-polling-bar__stop {
+        padding: 4px 12px;
+        background: transparent;
+        border: 1px solid rgba(220,38,38,0.5);
+        color: #DC2626;
+        font-size: 11px;
+        font-weight: 600;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 150ms ease;
+        font-family: inherit;
+      }
+      .wsn-polling-bar__stop:hover {
+        background: rgba(220,38,38,0.15);
+        border-color: #DC2626;
+      }
+
       /* Controls bar */
       .wsn-controls-bar {
         display: flex;
@@ -1275,10 +1523,14 @@
         justify-content: center;
       }
       .wsn-toggle.wsn-toggle--active {
-        background: white;
-        color: black;
+        background: rgba(255,255,255,0.18);
+        color: #ffffff;
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.3) inset;
       }
-      .wsn-toggle:not(.wsn-toggle--active):hover { color: white; background: #ffffff; border: 1px solid #ffffff; }
+      .wsn-toggle:not(.wsn-toggle--active):hover {
+        background: rgba(255,255,255,0.08);
+        color: #ffffff;
+      }
 
       /* ─── Scrollable Area ─── */
       .wsn-scroll-area {
@@ -1559,7 +1811,7 @@
       }
       .wsn-mode-card {
         background: #000;
-        border: 1px solid #ffffff;
+        border: 1.5px solid #ffffff;
         border-radius: 12px;
         padding: 20px 16px;
         cursor: pointer;
@@ -1570,38 +1822,54 @@
         text-align: center;
         position: relative;
         font-family: inherit;
+        box-shadow: 0 2px 8px rgba(255,255,255,0.08);
       }
       .wsn-mode-card:hover {
         border-width: 2px;
         padding: 19px 15px;
+        background: rgba(255,255,255,0.08);
+        box-shadow: 0 4px 16px rgba(255,255,255,0.18);
         transform: translateY(-2px);
-        box-shadow: 0 4px 16px rgba(255, 255, 255, 0.15);
       }
       .wsn-mode-card--active {
-        border-width: 2px;
+        border-width: 2.5px;
         padding: 19px 15px;
-        background: #ffffff;
-        color: #000;
-        box-shadow: 0 4px 20px rgba(255, 255, 255, 0.3);
+        background: linear-gradient(0deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.10) 100%);
+        color: #ffffff;
+        box-shadow: 0 4px 20px rgba(255,255,255,0.24);
       }
       .wsn-mode-card--active:hover {
-        box-shadow: 0 6px 24px rgba(255, 255, 255, 0.4);
+        background: linear-gradient(0deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.13) 100%);
+        box-shadow: 0 6px 24px rgba(255,255,255,0.28);
       }
       .wsn-mode-card__icon {
         margin-bottom: 10px;
-        color: #ffffff;
-        transition: all 250ms ease;
+        background: #fff;
+        border-radius: 8px;
+        color: #222;
+        padding: 2px 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 180ms, color 180ms, transform 250ms;
+        overflow: visible;
       }
       .wsn-mode-card__icon svg {
-        width: 45px;
-        height: 45px;
-        transition: filter 250ms ease;
+        width: 40px;
+        height: 40px;
+        min-width: 40px;
+        min-height: 40px;
+        max-width: 40px;
+        max-height: 40px;
+        filter: drop-shadow(0 0 2px #0008) drop-shadow(0 1px 0 #0004);
+        transition: filter 250ms;
+        display: block;
       }
-      .wsn-mode-card:hover .wsn-mode-card__icon {
-        transform: scale(1.05);
-      }
+      .wsn-mode-card:hover .wsn-mode-card__icon,
       .wsn-mode-card--active .wsn-mode-card__icon {
-        color: #000;
+        background: #fff;
+        color: #222;
+        transform: scale(1.05);
       }
       .wsn-mode-card__title {
         font-size: 14px;
@@ -1610,7 +1878,7 @@
         margin-bottom: 4px;
       }
       .wsn-mode-card--active .wsn-mode-card__title {
-        color: #000;
+        color: #ffffff;
       }
       .wsn-mode-card__desc {
         font-size: 11px;
@@ -1619,8 +1887,8 @@
         margin-bottom: 12px;
       }
       .wsn-mode-card--active .wsn-mode-card__desc {
-        color: #000;
-        opacity: 0.7;
+        color: #ffffff;
+        opacity: 0.8;
       }
       .wsn-mode-card__radio {
         width: 16px;
@@ -1632,15 +1900,17 @@
         justify-content: center;
       }
       .wsn-mode-card--active .wsn-mode-card__radio {
-        border-color: #000;
-        background: #ffffff;
+        border-color: #ffffff;
+        background: rgba(255,255,255,0.2);
+        box-shadow: 0 0 0 1px rgba(255,255,255,0.3) inset;
       }
       .wsn-mode-card--active .wsn-mode-card__radio::after {
         content: '';
         width: 8px;
         height: 8px;
-        background: #000;
+        background: #ffffff;
         border-radius: 50%;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
       }
       
       .wsn-hint {
@@ -1798,6 +2068,8 @@
         font-size: 13px;
         line-height: 1.5;
       }
+
+
     `;
   }
 })();
