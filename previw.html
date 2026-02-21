@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Snabby PDF Export Option Preview</title>
+  <style>
+    body { background: #181818; color: #fff; font-family: 'Segoe UI', Arial, sans-serif; }
+    .snabby-panel { width: 400px; margin: 40px auto; background: #181818; border-radius: 16px; padding: 24px; box-shadow: 0 2px 16px #0008; }
+    .export-btn { width: 100%; padding: 16px; font-size: 1.1em; background: #fff; color: #181818; border: none; border-radius: 8px; margin-top: 24px; cursor: pointer; font-weight: 600; letter-spacing: 0.5px; }
+    .modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(24,24,24,0.92); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+    .modal-content { background: #111; padding: 32px 24px; border-radius: 14px; width: 340px; box-shadow: 0 2px 24px #000a; }
+    .modal-title { font-size: 1.18em; margin-bottom: 16px; font-weight: 600; letter-spacing: 0.2px; }
+    .option { display: flex; align-items: flex-start; margin: 22px 0 0 0; }
+    .custom-radio {
+      position: relative;
+      width: 13px;
+      height: 13px;
+      margin-right: 10px;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+    .custom-radio input[type="radio"] {
+      opacity: 0;
+      width: 13px;
+      height: 13px;
+      margin: 0;
+      position: absolute;
+      left: 0; top: 0;
+      cursor: pointer;
+    }
+    .custom-radio .radio-indicator {
+      width: 13px;
+      height: 13px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      background: #181818;
+      box-shadow: 0 1px 6px #0004;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color 0.2s;
+    }
+    .custom-radio input[type="radio"]:checked + .radio-indicator {
+      border-color: #fff;
+      background: #fff;
+    }
+    .custom-radio input[type="radio"]:checked + .radio-indicator::after {
+      content: '';
+      display: block;
+      width: 5px;
+      height: 5px;
+      background: #181818;
+      border-radius: 50%;
+      margin: auto;
+    }
+    .option label {
+      font-size: 1.08em;
+      font-weight: 600;
+      color: #fff;
+      cursor: pointer;
+      margin-bottom: 2px;
+    }
+    .option .hint {
+      color: #bbb;
+      font-size: 0.97em;
+      font-weight: 400;
+      margin: 2px 0 0 0;
+    }
+    .hint { color: #bbb; font-size: 0.97em; margin-bottom: 8px; }
+    .modal-actions { text-align: right; margin-top: 18px; }
+    .modal-actions button { margin-left: 12px; padding: 8px 18px; border-radius: 6px; border: none; font-size: 1em; font-weight: 500; }
+    .modal-actions .primary { background: #fff; color: #181818; }
+    .modal-actions .secondary { background: #222; color: #fff; }
+    .modal-actions .primary:active { background: #eee; }
+    .modal-actions .secondary:active { background: #333; }
+  </style>
+</head>
+<body>
+  <div class="snabby-panel">
+    <h2 style="margin-top:0; font-weight:700; letter-spacing:1px;">Snabby</h2>
+    <div style="margin-bottom: 16px; color:#bbb;">4 captured</div>
+    <!-- ...existing thumbnails... -->
+    <button class="export-btn" onclick="showExportModal()">Download PDF</button>
+  </div>
+
+  <!-- Export Option Modal (hidden by default) -->
+  <div class="modal" id="export-modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-title">PDF Export Options</div>
+      <div class="hint">Some images are still being processed for text recognition (OCR).</div>
+      <div class="option">
+        <span class="custom-radio">
+          <input type="radio" id="fast" name="ocrOption" checked>
+          <span class="radio-indicator"></span>
+        </span>
+        <div>
+          <label for="fast">Export now (skip OCR for unfinished images)</label>
+          <div class="hint">Fastest. Some images may not have selectable/searchable text.</div>
+        </div>
+      </div>
+      <div class="option">
+        <span class="custom-radio">
+          <input type="radio" id="complete" name="ocrOption">
+          <span class="radio-indicator"></span>
+        </span>
+        <div>
+          <label for="complete">Wait for all images to finish OCR</label>
+          <div class="hint">Slower. All images will have OCR text, but this may take up to a minute.</div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="secondary" onclick="hideExportModal()">Cancel</button>
+        <button class="primary" onclick="alert('Export started!')">Export PDF</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    function showExportModal() {
+      // Simulate: only show modal if some images are missing OCR
+      document.getElementById('export-modal').style.display = 'flex';
+    }
+    function hideExportModal() {
+      document.getElementById('export-modal').style.display = 'none';
+    }
+  </script>
+</body>
+</html>

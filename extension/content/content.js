@@ -72,6 +72,7 @@
     PHONE_IMAGE_RECEIVED: 'PHONE_IMAGE_RECEIVED',
     STOP_UPLOAD_POLLING: 'STOP_UPLOAD_POLLING',
     GET_UPLOAD_POLLING_STATE: 'GET_UPLOAD_POLLING_STATE',
+    CHECK_OCR_STATUS: 'CHECK_OCR_STATUS',
     CAPTURE_COMPLETE: 'CAPTURE_COMPLETE',
     START_REGION_SELECT: 'START_REGION_SELECT',
     SESSION_UPDATED: 'SESSION_UPDATED',
@@ -653,7 +654,7 @@
 
     // Export
     view.querySelector('[data-action="export"]')?.addEventListener('click', async () => {
-      if (isExporting) return; // Already exporting — ignore duplicate clicks
+      if (isExporting) return;
       if (isUploadPolling) {
         showToast('Stop phone upload polling before exporting PDF.', 'warning');
         return;
@@ -662,20 +663,30 @@
         showToast('Wait for all images to finish loading...', 'warning');
         return;
       }
+
+      // Check how many images still have pending OCR
+      const ocrStatus = await sendMessage({ type: MSG.CHECK_OCR_STATUS });
+      const pendingCount = ocrStatus.pendingCount || 0;
+
+      if (pendingCount > 0) {
+        // Some images not yet OCR'd — show options modal
+        showOcrExportModal(pendingCount);
+      } else {
+        // All cached — export immediately without modal
+        await doExport(false);
+      }
+    });
+
+    async function doExport(skipPendingOcr) {
       isExporting = true;
       const btn = view.querySelector('[data-action="export"]');
-      btn.disabled = true;
-      btn.textContent = 'Generating...';
-
-      // Show extra message while generating PDF
-      const msgDiv = document.createElement('div');
-      msgDiv.className = 'wsn-export-hint';
-      msgDiv.textContent = 'This might take a minute...';
-
-      btn.parentElement.appendChild(msgDiv);
-
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Generating...';
+        // ...existing code...
+      }
       try {
-        const result = await sendMessage({ type: MSG.EXPORT_PDF });
+        const result = await sendMessage({ type: MSG.EXPORT_PDF, skipPendingOcr });
         if (result.success) {
           showToast('PDF downloaded successfully', 'success');
           isExporting = false;
@@ -684,16 +695,66 @@
           const errMsg = result.message || 'Failed to export PDF';
           showToast(errMsg, 'error');
           isExporting = false;
-          btn.disabled = false;
-          btn.textContent = 'Download PDF';
+          if (btn) { btn.disabled = false; btn.textContent = 'Download PDF'; }
+          const hint = view.querySelector('.wsn-export-hint');
+          if (hint) hint.remove();
         }
       } catch (e) {
         showToast('PDF export failed unexpectedly.', 'error');
         isExporting = false;
-        btn.disabled = false;
-        btn.textContent = 'Download PDF';
+        if (btn) { btn.disabled = false; btn.textContent = 'Download PDF'; }
+        const hint = view.querySelector('.wsn-export-hint');
+        if (hint) hint.remove();
       }
-    });
+    }
+
+    function showOcrExportModal(pendingCount) {
+      const overlay = el('div', 'wsn-modal-overlay');
+      overlay.innerHTML = `
+        <div class="wsn-modal">
+          <div class="wsn-modal__title">PDF Export Options</div>
+          <p class="wsn-modal__text">${pendingCount} image(s) are still being processed for text recognition (OCR).</p>
+          <div class="wsn-ocr-options">
+            <div class="wsn-ocr-option">
+              <span class="wsn-radio-wrap">
+                <input type="radio" id="wsn-ocr-fast" name="wsn-ocr-choice" checked>
+                <span class="wsn-radio-indicator"></span>
+              </span>
+              <div class="wsn-ocr-option-text">
+                <label for="wsn-ocr-fast">Export now</label>
+                <div class="wsn-ocr-option-hint">Fastest. Some images may not have selectable/searchable text.</div>
+              </div>
+            </div>
+            <div class="wsn-ocr-option">
+              <span class="wsn-radio-wrap">
+                <input type="radio" id="wsn-ocr-wait" name="wsn-ocr-choice">
+                <span class="wsn-radio-indicator"></span>
+              </span>
+              <div class="wsn-ocr-option-text">
+                <label for="wsn-ocr-wait">Wait for OCR to finish</label>
+                <div class="wsn-ocr-option-hint">Slower. All images will have OCR text. May take up to a minute.</div>
+              </div>
+            </div>
+          </div>
+          <div class="wsn-modal__actions">
+            <button class="wsn-btn--secondary" data-action="cancel-export-modal">Cancel</button>
+            <button class="wsn-btn--primary-sm" data-action="confirm-export-modal">Export PDF</button>
+          </div>
+        </div>
+      `;
+
+      overlay.querySelector('[data-action="cancel-export-modal"]').addEventListener('click', () => {
+        overlay.remove();
+      });
+
+      overlay.querySelector('[data-action="confirm-export-modal"]').addEventListener('click', async () => {
+        const skipPendingOcr = overlay.querySelector('#wsn-ocr-fast').checked;
+        overlay.remove();
+        await doExport(skipPendingOcr);
+      });
+
+      panel.appendChild(overlay);
+    }
 
     // Phone upload
     view.querySelector('.wsn-btn--phone')?.addEventListener('click', async () => {
@@ -2068,6 +2129,85 @@
         font-size: 13px;
         line-height: 1.5;
       }
+
+      /* ─── OCR Export Options Modal ─── */
+      .wsn-ocr-options {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        margin: 16px 0 20px 0;
+      }
+      .wsn-ocr-option {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        cursor: pointer;
+      }
+      .wsn-radio-wrap {
+        position: relative;
+        width: 13px;
+        height: 13px;
+        flex-shrink: 0;
+        margin-top: 3px;
+      }
+      .wsn-radio-wrap input[type="radio"] {
+        opacity: 0;
+        width: 13px;
+        height: 13px;
+        position: absolute;
+        left: 0; top: 0;
+        margin: 0;
+        cursor: pointer;
+      }
+      .wsn-radio-indicator {
+        width: 13px;
+        height: 13px;
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+        background: #000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s;
+        pointer-events: none;
+      }
+      .wsn-radio-wrap input[type="radio"]:checked + .wsn-radio-indicator {
+        background: #ffffff;
+      }
+      .wsn-radio-wrap input[type="radio"]:checked + .wsn-radio-indicator::after {
+        content: '';
+        display: block;
+        width: 5px;
+        height: 5px;
+        background: #000;
+        border-radius: 50%;
+      }
+      .wsn-ocr-option-text label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #ffffff;
+        cursor: pointer;
+        display: block;
+        margin-bottom: 2px;
+      }
+      .wsn-ocr-option-hint {
+        font-size: 12px;
+        color: rgba(255,255,255,0.55);
+        line-height: 1.4;
+      }
+      .wsn-btn--primary-sm {
+        padding: 10px 16px;
+        background: #ffffff;
+        border: none;
+        color: #000;
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: opacity 150ms ease;
+        font-family: inherit;
+      }
+      .wsn-btn--primary-sm:hover { opacity: 0.85; }
 
 
     `;

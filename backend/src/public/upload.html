@@ -187,8 +187,8 @@
     <!-- Session ended overlay -->
     <div class="overlay-msg" id="sessionEnded">
       <div class="icon">🔒</div>
-      <h2>Session Ended</h2>
-      <p>This upload session has been closed from the extension.<br>You can close this tab.</p>
+      <h2>Polling Session Stopped</h2>
+      <p>The polling session has been stopped from the extension.<br>Scan the QR code again to upload images.</p>
     </div>
 
     <!-- Upload window expired overlay -->
@@ -402,7 +402,7 @@
           try {
             const socket = io({ query: { sessionId } });
             socket.on('uploads-closed', () => {
-              markWindowExpired();
+              markSessionEnded();
             });
           } catch(e) { /* Socket.io optional */ }
         };
@@ -416,7 +416,9 @@
         const res = await fetch(`/api/session/${sessionId}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.uploadExpiresAt) {
+          if (data.uploadsClosed) {
+            markSessionEnded();
+          } else if (data.uploadExpiresAt) {
             uploadExpiresAt = data.uploadExpiresAt;
             // Check if already expired
             if (Date.now() >= uploadExpiresAt) {
@@ -433,7 +435,11 @@
         const res = await fetch(`/api/session/${sessionId}/valid`);
         if (res.ok) {
           const data = await res.json();
-          if (!data.valid) markSessionEnded();
+          if (data.uploadsClosed) {
+            markSessionEnded();
+          } else if (!data.valid) {
+            markSessionEnded();
+          }
         }
       } catch { /* ignore */ }
     })();

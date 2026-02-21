@@ -404,6 +404,22 @@ async function handleMessage(request, sender) {
     return result;
   }
 
+  case MSG.CHECK_OCR_STATUS: {
+    // Returns how many images in the current session have pending (unprocessed) OCR
+    const session = await SessionManager.getSession();
+    if (!session || !session.screenshotIds || session.screenshotIds.length === 0) {
+      return { pendingCount: 0, totalCount: 0 };
+    }
+    let pendingCount = 0;
+    for (const screenshotId of session.screenshotIds) {
+      const screenshot = await StorageManager.getScreenshot(screenshotId);
+      if (screenshot && !screenshot.ocrAttempted && !(screenshot.ocrWords && screenshot.ocrWords.length > 0) && !screenshot.ocrText) {
+        pendingCount++;
+      }
+    }
+    return { pendingCount, totalCount: session.screenshotIds.length };
+  }
+
   case MSG.EXPORT_PDF: {
     // Block export while phone upload polling is active
     if (uploadSession && uploadSession.pollTimer) {
@@ -430,6 +446,8 @@ async function handleMessage(request, sender) {
         if (tabId) {
           try { await chrome.tabs.sendMessage(tabId, { type: MSG.EXPORT_PROGRESS, current: 0, total, phase: 'ocr' }); } catch (_) {}
         }
+
+        const skipPendingOcr = !!request.skipPendingOcr;
 
         // Build task list — each task is an async function returning OCR data
         const ocrTasks = session.screenshotIds.map((screenshotId, i) => async () => {
@@ -459,6 +477,12 @@ async function handleMessage(request, sender) {
           if (screenshot && screenshot.ocrText) {
             if (tabId) { try { await chrome.tabs.sendMessage(tabId, { type: MSG.EXPORT_PROGRESS, current: i + 1, total, phase: 'ocr' }); } catch (_) {} }
             return { text: screenshot.ocrText, words: [], imageWidth: 0, imageHeight: 0 };
+          }
+
+          // Image has no cached OCR — skip if user chose fast export
+          if (skipPendingOcr) {
+            if (tabId) { try { await chrome.tabs.sendMessage(tabId, { type: MSG.EXPORT_PROGRESS, current: i + 1, total, phase: 'ocr' }); } catch (_) {} }
+            return null;
           }
 
           // Not cached — fetch OCR from backend
