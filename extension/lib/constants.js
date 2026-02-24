@@ -17,11 +17,11 @@ const WSN_CONSTANTS = {
   // Upload window duration (how long phone can upload after QR scan)
   UPLOAD_WINDOW_MS: 3 * 60 * 1000, // 3 minutes
 
-  // Backend URL – set to your Railway deployment URL before publishing
+  // Backend URL – only needed for QR/phone upload features.
+  // OCR is now processed locally in the extension.
   // For local development: 'http://localhost:3000'
-  // For network testing: 'http://172.30.42.34:3000'
   // For production: 'https://your-app.up.railway.app'
-  BACKEND_URL: 'http://172.30.42.34:3000',
+  BACKEND_URL: 'http://10.223.150.34:3000',
 
   // Session statuses
   STATUS: {

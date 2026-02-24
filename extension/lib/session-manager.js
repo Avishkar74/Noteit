@@ -28,15 +28,15 @@ const SessionManager = (() => {
     return Math.ceil(base64.length * 0.75);
   }
 
-  // OCR queue: serializes background OCR requests so the backend's single
-  // Tesseract worker processes them one at a time instead of being overwhelmed
-  // by parallel requests that all timeout.
+  // OCR queue: serializes background OCR requests so the local Tesseract
+  // worker processes them one at a time (single worker in offscreen document).
   let ocrQueue = Promise.resolve();
 
   /**
    * Extract OCR text from a screenshot and update storage.
    * Non-blocking: runs in background after screenshot is saved.
-   * Serialized via ocrQueue to avoid overwhelming the backend.
+   * Serialized via ocrQueue to process one at a time.
+   * Uses local offscreen document Tesseract.js — no backend dependency.
    * @param {string} screenshotId 
    * @param {string} dataUrl 
    */
@@ -45,25 +45,22 @@ const SessionManager = (() => {
   }
 
   async function _doOcrExtract(screenshotId, dataUrl) {
-    const backendUrl = WSN_CONSTANTS.BACKEND_URL;
-    if (!backendUrl) return; // Backend not configured
-
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s timeout for OCR
+      // Ensure offscreen document exists before sending OCR request.
+      // ensureOffscreen() is defined in service-worker.js (same global scope via importScripts).
+      if (typeof ensureOffscreen === 'function') {
+        await ensureOffscreen();
+      }
 
-      // Use layout endpoint to get word-level bounding boxes
-      const response = await fetch(`${backendUrl}/api/ocr/extract-base64-layout`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: dataUrl }),
-        signal: controller.signal,
+      // Send to offscreen document for local Tesseract.js OCR
+      const result = await chrome.runtime.sendMessage({
+        target: 'offscreen',
+        action: 'ocr',
+        dataUrl,
       });
 
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        console.warn('Snabby: OCR endpoint returned', response.status);
+      if (!result || !result.success) {
+        console.warn('Snabby: Local OCR returned failure:', result?.error);
         // Mark as attempted so we don't re-try at export time
         const screenshot = await StorageManager.getScreenshot(screenshotId);
         if (screenshot) {
@@ -72,8 +69,6 @@ const SessionManager = (() => {
         }
         return;
       }
-
-      const result = await response.json();
 
       // Update the screenshot with OCR layout data
       const screenshot = await StorageManager.getScreenshot(screenshotId);

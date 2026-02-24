@@ -8,19 +8,20 @@
     "storage",
     "unlimitedStorage",
     "downloads",
-    "tabs"
+    "tabs",
+    "offscreen"
   ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
   "commands": {
     "capture-screenshot": {
       "suggested_key": {
         "default": "Ctrl+Shift+S",
         "mac": "Command+Shift+S"
       },
-      "description": "Capture screenshot"
+      "description": "Capture a screenshot"
     }
-  },
-  "background": {
-    "service_worker": "background/service-worker.js"
   },
   "content_scripts": [
     {
@@ -41,8 +42,11 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["assets/*"],
+      "resources": ["assets/*", "vendor/tesseract/*", "background/offscreen.html"],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
 }

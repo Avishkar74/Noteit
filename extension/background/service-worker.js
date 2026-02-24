@@ -9,12 +9,65 @@
 
 importScripts('../lib/constants.js');
 importScripts('../lib/storage.js');
+importScripts('../lib/blob-store.js');
 importScripts('../lib/session-manager.js');
 importScripts('../vendor/pdf-lib.min.js');
 importScripts('../lib/pdf-generator.js');
 
 const MSG = WSN_CONSTANTS.MSG;
 let exportInProgress = false;
+
+// ─── Offscreen Document Lifecycle ───────────────────
+
+let offscreenCreating = null; // Promise while creation in progress
+
+/**
+ * Ensure the offscreen document is available.
+ * Safe to call multiple times — only creates once.
+ */
+async function ensureOffscreen() {
+  // Check if it already exists
+  const existingContexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL('background/offscreen.html')],
+  });
+  if (existingContexts.length > 0) return;
+
+  // Avoid racing creates
+  if (offscreenCreating) {
+    await offscreenCreating;
+    return;
+  }
+
+  offscreenCreating = chrome.offscreen.createDocument({
+    url: 'background/offscreen.html',
+    reasons: ['WORKERS'],
+    justification: 'Tesseract.js OCR requires Web Worker + WASM (not available in service worker)',
+  });
+
+  try {
+    await offscreenCreating;
+    console.log('[Snabby] Offscreen document created');
+  } catch (err) {
+    // May fail if already exists (race condition)
+    if (!err.message.includes('Only a single offscreen')) {
+      console.error('[Snabby] Failed to create offscreen document:', err);
+    }
+  } finally {
+    offscreenCreating = null;
+  }
+}
+
+/**
+ * Send a message to the offscreen document and return the response.
+ * Automatically ensures the offscreen document is alive.
+ * @param {object} msg - must include { target: 'offscreen', action, ... }
+ * @returns {Promise<object>}
+ */
+async function sendToOffscreen(msg) {
+  await ensureOffscreen();
+  return chrome.runtime.sendMessage({ target: 'offscreen', ...msg });
+}
 
 /**
  * Run an array of async task functions with limited concurrency.
@@ -317,6 +370,9 @@ chrome.commands.onCommand.addListener(async (command) => {
 // ─── Message Handling (Content Script → Background) ──
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // Ignore messages targeted at the offscreen document
+  if (request.target === 'offscreen') return false;
+
   handleMessage(request, sender)
     .then(sendResponse)
     .catch(err => {
@@ -434,10 +490,9 @@ async function handleMessage(request, sender) {
 
     try {
       const allOcrData = [];
-      const backendUrl = getBackendUrl();
 
       // Collect OCR layout data from local extension screenshots.
-      // Uses limited concurrency to avoid overwhelming the backend's single Tesseract worker.
+      // Uses local offscreen-document Tesseract.js — no backend dependency.
       const session = await SessionManager.getSession();
       if (session && session.screenshotIds) {
         const total = session.screenshotIds.length;
@@ -485,26 +540,17 @@ async function handleMessage(request, sender) {
             return null;
           }
 
-          // Not cached — fetch OCR from backend
-          if (backendUrl && screenshot && screenshot.dataUrl) {
+          // Not cached — run OCR locally via offscreen document
+          if (screenshot && screenshot.dataUrl) {
             try {
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 30000);
-              const res = await fetch(`${backendUrl}/api/ocr/extract-base64-layout`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ image: screenshot.dataUrl }),
-                signal: controller.signal,
-              });
-              clearTimeout(timeoutId);
+              const ocrResult = await sendToOffscreen({ action: 'ocr', dataUrl: screenshot.dataUrl });
 
-              if (res.ok) {
-                const data = await res.json();
+              if (ocrResult && ocrResult.success) {
                 const ocrData = {
-                  text: data.text || '',
-                  words: data.words || [],
-                  imageWidth: data.imageWidth || 0,
-                  imageHeight: data.imageHeight || 0,
+                  text: ocrResult.text || '',
+                  words: ocrResult.words || [],
+                  imageWidth: ocrResult.imageWidth || 0,
+                  imageHeight: ocrResult.imageHeight || 0,
                 };
                 // Cache for future use
                 screenshot.ocrText = ocrData.text;
@@ -517,7 +563,7 @@ async function handleMessage(request, sender) {
                 return ocrData;
               }
             } catch (ocrErr) {
-              console.warn(`Snabby: OCR at export failed for screenshot ${i + 1}:`, ocrErr.message);
+              console.warn(`Snabby: Local OCR at export failed for screenshot ${i + 1}:`, ocrErr.message);
             }
           }
           // Mark as attempted even on failure to avoid re-trying on next export
@@ -529,10 +575,8 @@ async function handleMessage(request, sender) {
           return null;
         });
 
-        // Run OCR tasks with limited concurrency (max 2 at a time)
-        // The backend has a single Tesseract worker — parallel requests just queue up
-        // and cause timeouts. 2 concurrent keeps the pipeline fed without overloading.
-        const results = await runWithConcurrency(ocrTasks, 2);
+        // Run OCR tasks sequentially — local Tesseract uses a single worker
+        const results = await runWithConcurrency(ocrTasks, 1);
         allOcrData.push(...results);
       }
 

@@ -2,30 +2,24 @@
  * Snabby – Upload Routes
  * POST /api/upload/:sessionId  → upload image to session
  *
- * Performance:
- * - Sharp normalizes EXIF orientation on upload (no rotated PDFs)
- * - Images compressed to JPEG quality 85 (smaller payloads)
- * - OCR runs async fire-and-forget (non-blocking response)
+ * Lightweight: stores raw image data as-is.
+ * EXIF normalization and OCR are handled client-side by the Chrome extension.
  */
 
 const express = require('express');
 const multer = require('multer');
-const sharp = require('sharp');
 const rateLimit = require('express-rate-limit');
 const { getSession, validateToken, addImage, isUploadWindowOpen } = require('../services/session-store');
-const { extractText } = require('../services/ocr-service');
 
 const router = express.Router();
 
 // Rate limit for uploads: 60 uploads per minute per session
-// Use sessionId as key instead of IP to prevent accumulation across sessions
 const uploadLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
   message: { error: 'Upload rate limit exceeded (60 per minute). Please wait.' },
   skip: () => process.env.NODE_ENV === 'test',
   keyGenerator: (req) => {
-    // Use sessionId from URL params as the rate limit key
     return req.params.sessionId || req.ip;
   },
 });
@@ -43,24 +37,6 @@ const upload = multer({
     }
   },
 });
-
-/**
- * Normalize EXIF orientation and compress to JPEG.
- * Returns { buffer, mimeType, width, height }.
- */
-async function normalizeImage(buffer) {
-  const normalized = await sharp(buffer)
-    .rotate()                                 // auto-rotate from EXIF
-    .jpeg({ quality: 85, mozjpeg: true })     // compress
-    .toBuffer({ resolveWithObject: true });
-
-  return {
-    buffer: normalized.data,
-    mimeType: 'image/jpeg',
-    width: normalized.info.width,
-    height: normalized.info.height,
-  };
-}
 
 // Upload image to session
 router.post('/:sessionId', uploadLimiter, upload.single('image'), async (req, res) => {
@@ -86,12 +62,11 @@ router.post('/:sessionId', uploadLimiter, upload.single('image'), async (req, re
   }
 
   try {
-    // Normalize orientation + compress
-    const { buffer, mimeType } = await normalizeImage(req.file.buffer);
-    const base64 = buffer.toString('base64');
+    // Store image as-is (extension handles EXIF normalization client-side)
+    const mimeType = req.file.mimetype || 'image/jpeg';
+    const base64 = req.file.buffer.toString('base64');
     const dataUrl = `data:${mimeType};base64,${base64}`;
 
-    // Store image immediately (no OCR blocking)
     const result = addImage(sessionId, dataUrl, '');
     if (result.error) {
       return res.status(400).json({ error: result.error });
@@ -106,21 +81,7 @@ router.post('/:sessionId', uploadLimiter, upload.single('image'), async (req, re
       });
     }
 
-    // Respond immediately — don't wait for OCR
     res.json({ success: true, imageCount: result.imageCount });
-
-    // Run OCR in background (fire-and-forget)
-    extractText(buffer)
-      .then(ocrResult => {
-        if (ocrResult.text) {
-          const s = getSession(sessionId);
-          if (s && s.ocrTexts) {
-            s.ocrTexts[result.imageCount - 1] = ocrResult.text;
-          }
-        }
-      })
-      .catch(() => { /* OCR failure is non-critical */ });
-
   } catch (err) {
     console.error('Upload processing error:', err.message);
     return res.status(500).json({ error: 'Failed to process image.' });

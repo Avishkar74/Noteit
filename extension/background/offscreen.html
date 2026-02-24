@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><title>Snabby OCR Offscreen</title></head>
+<body>
+<!-- 
+  Offscreen document for Snabby Chrome Extension.
+  Runs Tesseract.js OCR in a DOM context (service workers can't use Web Workers).
+  This page is never visible to the user.
+-->
+<script src="../vendor/tesseract/tesseract.min.js"></script>
+<script src="offscreen-ocr.js"></script>
+</body>
+</html>

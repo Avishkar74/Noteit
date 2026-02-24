@@ -1,6 +1,7 @@
 /**
  * Snabby – Backend Server
- * Handles QR-based phone uploads via Express + Socket.io
+ * Lightweight server: handles QR-based phone uploads, session CRUD, and WebSocket.
+ * OCR and image processing are handled client-side in the Chrome extension.
  */
 
 const express = require('express');
@@ -12,9 +13,7 @@ const path = require('path');
 
 const uploadRouter = require('./routes/upload');
 const sessionRouter = require('./routes/session');
-const ocrRouter = require('./routes/ocr');
 const { cleanupExpiredSessions } = require('./services/session-store');
-const { terminateWorker: terminateOcrWorker } = require('./services/ocr-service');
 
 const PORT = process.env.PORT || 3000;
 const CLEANUP_INTERVAL = 5 * 60 * 1000; // 5 minutes
@@ -57,7 +56,6 @@ app.set('io', io);
 // Routes
 app.use('/api/session', sessionRouter);
 app.use('/api/upload', uploadRouter);
-app.use('/api/ocr', ocrRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -92,7 +90,6 @@ if (process.env.NODE_ENV !== 'test') {
 // Graceful shutdown
 async function shutdown() {
   if (cleanupTimer) clearInterval(cleanupTimer);
-  await terminateOcrWorker();
   io.close();
   server.close(() => {
     console.log('Server shut down gracefully.');
