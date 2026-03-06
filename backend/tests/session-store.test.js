@@ -90,6 +90,39 @@ describe('Session Store', () => {
       const result = store.addImage('fake', 'data:image/png;base64,abc');
       expect(result.error).toBe('SESSION_NOT_FOUND');
     });
+
+    test('returns imagesUploaded and imagesRemaining on success', () => {
+      const { sessionId } = store.createSession();
+      const result = store.addImage(sessionId, 'data:image/png;base64,abc');
+      expect(result.success).toBe(true);
+      expect(result.imagesUploaded).toBe(1);
+      expect(result.imagesRemaining).toBe(store.MAX_IMAGES_PER_SESSION - 1);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns SESSION_IMAGE_LIMIT_REACHED when session is full', () => {
+      const { sessionId } = store.createSession();
+      // Fill the session to the exact limit
+      for (let i = 0; i < store.MAX_IMAGES_PER_SESSION; i++) {
+        const r = store.addImage(sessionId, 'data:image/png;base64,abc');
+        expect(r.success).toBe(true);
+      }
+      // One more should be rejected
+      const result = store.addImage(sessionId, 'data:image/png;base64,abc');
+      expect(result.error).toBe('SESSION_IMAGE_LIMIT_REACHED');
+      expect(result.imagesUploaded).toBe(store.MAX_IMAGES_PER_SESSION);
+      expect(result.imagesRemaining).toBe(0);
+      store.deleteSession(sessionId);
+    });
+
+    test('imagesRemaining decrements correctly with each upload', () => {
+      const { sessionId } = store.createSession();
+      const r1 = store.addImage(sessionId, 'data:image/png;base64,abc');
+      expect(r1.imagesRemaining).toBe(store.MAX_IMAGES_PER_SESSION - 1);
+      const r2 = store.addImage(sessionId, 'data:image/png;base64,abc');
+      expect(r2.imagesRemaining).toBe(store.MAX_IMAGES_PER_SESSION - 2);
+      store.deleteSession(sessionId);
+    });
   });
 
   describe('getImages', () => {

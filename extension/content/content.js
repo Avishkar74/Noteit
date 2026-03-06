@@ -552,6 +552,15 @@
 
     const view = el('div', 'wsn-panel__body');
 
+    // Memory bar computed values
+    const memLimitBytes = 200 * 1024 * 1024; // 200 MB
+    const memUsageBytes = session.memoryUsage || 0;
+    const memPct = Math.min(100, Math.round((memUsageBytes / memLimitBytes) * 100));
+    const memUsageMB = (memUsageBytes / (1024 * 1024)).toFixed(1);
+    const memRemainMB = Math.max(0, (memLimitBytes - memUsageBytes) / (1024 * 1024)).toFixed(1);
+    const memFillMod = memPct >= 90 ? ' wsn-memory-bar__fill--danger'
+      : memPct >= 70 ? ' wsn-memory-bar__fill--warning' : '';
+
     const exportDisabled = session.screenshotCount === 0 || isUploadPolling || isReceivingImages || isExporting;
 
     view.innerHTML = `
@@ -576,6 +585,18 @@
             <span class="wsn-polling-bar__timer" id="wsn-polling-timer"></span>
           </div>
           <button class="wsn-polling-bar__stop" data-action="stop-polling" title="Stop phone upload">Stop</button>
+        </div>
+
+        <!-- Session memory bar -->
+        <div class="wsn-memory-bar">
+          <div class="wsn-memory-bar__label">
+            <span>Session memory</span>
+            <span>${memUsageMB} MB / 200 MB</span>
+          </div>
+          <div class="wsn-memory-bar__track">
+            <div class="wsn-memory-bar__fill${memFillMod}" style="width:${memPct}%"></div>
+          </div>
+          <div class="wsn-memory-bar__hint">${memRemainMB} MB remaining • download PDF &amp; start new session when full</div>
         </div>
 
         <div class="wsn-controls-bar">
@@ -804,23 +825,20 @@
       // Polling indicator shows in active view; user can stop from there.
       qrModalOpen = false;
       overlay.remove();
-      // Refresh panel to show polling indicator
+      // Refresh panel to show polling indicator and already-stored images
       if (panelOpen) await refreshPanelContent();
+      // Schedule follow-up refreshes to catch images still being fetched/stored by the service worker
+      setTimeout(() => { if (panelOpen && !qrModalOpen) refreshPanelContent(); }, 2000);
+      setTimeout(() => { if (panelOpen && !qrModalOpen) refreshPanelContent(); }, 5000);
     });
 
     panel.appendChild(overlay);
 
-    // Open keep-alive port so the service worker stays awake for polling
-    if (!qrKeepAlivePort) {
-      try {
-        qrKeepAlivePort = chrome.runtime.connect({ name: 'qr-upload-keepalive' });
-        qrKeepAlivePort.onDisconnect.addListener(() => { qrKeepAlivePort = null; });
-      } catch (_) {
-        // If context is dead, port will fail — that's fine
-      }
-    }
-
-    // Request QR from backend via service worker
+    // Request QR from backend via service worker.
+    // Keep-alive port is opened in the POLLING_STATE_CHANGED true handler so it is
+    // always opened AFTER polling is confirmed active (avoids a race where a previous
+    // session's stopPolling fires POLLING_STATE_CHANGED false, content.js disconnects
+    // the port, onDisconnect fires, and stopPolling triggers again on the new session).
     const result = await sendMessage({ type: MSG.CREATE_UPLOAD_SESSION });
 
     const loading = overlay.querySelector('.wsn-qr-loading');
@@ -871,10 +889,15 @@
   }
 
   async function loadThumbnails() {
+    const myGen = refreshGeneration; // snapshot before any async op
     const grid = shadow.getElementById('wsn-preview-grid');
     if (!grid) return;
 
     const result = await sendMessage({ type: MSG.GET_ALL_THUMBNAILS });
+
+    // Bail if a newer refresh has started — the grid element we captured is now detached
+    if (myGen !== refreshGeneration) return;
+
     const thumbnails = result.thumbnails || [];
 
     if (thumbnails.length === 0) {
@@ -911,10 +934,9 @@
         }
       });
 
-      // Click to view (optional enhancement)
+      // Click to view — open full-size lightbox
       thumbEl.addEventListener('click', () => {
-        // Could add fullscreen preview in future
-        // (removed toast notification)
+        showImagePreview(shadow, thumbnails, idx);
       });
 
       grid.appendChild(thumbEl);
@@ -927,6 +949,104 @@
         scrollArea.scrollTop = scrollArea.scrollHeight;
       });
     }
+  }
+
+  // ═══════════════════════════════════════════════
+  //  IMAGE PREVIEW LIGHTBOX
+  // ═══════════════════════════════════════════════
+
+  /**
+   * Open a full-viewport lightbox showing a capture at `startIdx` with prev/next navigation.
+   * The overlay is appended to `shadow` so it stays inside the extension's isolated DOM.
+   */
+  function showImagePreview(shadow, thumbs, startIdx) {
+    // Only one lightbox at a time
+    if (shadow.querySelector('.wsn-lightbox')) return;
+
+    let currentIdx = startIdx;
+
+    // ── Build DOM ────────────────────────────────
+    const overlay = document.createElement('div');
+    overlay.className = 'wsn-lightbox';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'wsn-lightbox-backdrop';
+
+    const dialog = document.createElement('div');
+    dialog.className = 'wsn-lightbox-dialog';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'wsn-lightbox-close';
+    closeBtn.setAttribute('aria-label', 'Close preview');
+    closeBtn.textContent = '×';
+
+    const img = document.createElement('img');
+    img.className = 'wsn-lightbox-img';
+
+    const caption = document.createElement('div');
+    caption.className = 'wsn-lightbox-caption';
+
+    const prevBtn = document.createElement('button');
+    prevBtn.className = 'wsn-lightbox-nav wsn-lightbox-prev';
+    prevBtn.setAttribute('aria-label', 'Previous image');
+    prevBtn.innerHTML = '&#8249;'; // ‹
+
+    const nextBtn = document.createElement('button');
+    nextBtn.className = 'wsn-lightbox-nav wsn-lightbox-next';
+    nextBtn.setAttribute('aria-label', 'Next image');
+    nextBtn.innerHTML = '&#8250;'; // ›
+
+    dialog.appendChild(closeBtn);
+    dialog.appendChild(img);
+    dialog.appendChild(caption);
+    if (thumbs.length > 1) {
+      dialog.appendChild(prevBtn);
+      dialog.appendChild(nextBtn);
+    }
+    overlay.appendChild(backdrop);
+    overlay.appendChild(dialog);
+
+    // ── Render current index ─────────────────────
+    function render() {
+      const thumb = thumbs[currentIdx];
+      img.src = thumb.dataUrl;
+      img.alt = `Capture #${currentIdx + 1}`;
+      caption.textContent = `#${currentIdx + 1} · ${thumb.tabTitle || thumb.url || 'Untitled'}`;
+      if (thumbs.length > 1) {
+        prevBtn.disabled = currentIdx === 0;
+        nextBtn.disabled = currentIdx === thumbs.length - 1;
+      }
+    }
+
+    // ── Close ────────────────────────────────────
+    function close() {
+      overlay.remove();
+      document.removeEventListener('keydown', onKeyDown);
+    }
+
+    // ── Keyboard nav ─────────────────────────────
+    function onKeyDown(e) {
+      if (e.key === 'Escape') { e.stopPropagation(); close(); return; }
+      if (thumbs.length > 1) {
+        if (e.key === 'ArrowLeft' && currentIdx > 0) { currentIdx--; render(); }
+        else if (e.key === 'ArrowRight' && currentIdx < thumbs.length - 1) { currentIdx++; render(); }
+      }
+    }
+
+    // ── Event listeners ──────────────────────────
+    backdrop.addEventListener('click', close);
+    closeBtn.addEventListener('click', close);
+    if (thumbs.length > 1) {
+      prevBtn.addEventListener('click', () => { if (currentIdx > 0) { currentIdx--; render(); } });
+      nextBtn.addEventListener('click', () => { if (currentIdx < thumbs.length - 1) { currentIdx++; render(); } });
+    }
+    document.addEventListener('keydown', onKeyDown);
+
+    render();
+    shadow.appendChild(overlay);
+    closeBtn.focus();
   }
 
   // ═══════════════════════════════════════════════
@@ -1179,7 +1299,18 @@
       case MSG.POLLING_STATE_CHANGED:
         isUploadPolling = message.isPolling;
         uploadExpiresAt = message.uploadExpiresAt || null;
-        if (!isUploadPolling) {
+        if (isUploadPolling) {
+          // Polling confirmed active — open the keep-alive port NOW (not before CREATE_UPLOAD_SESSION)
+          // so it survives any port-close race from a previous session's stopPolling call.
+          if (!qrKeepAlivePort) {
+            try {
+              qrKeepAlivePort = chrome.runtime.connect({ name: 'qr-upload-keepalive' });
+              qrKeepAlivePort.onDisconnect.addListener(() => { qrKeepAlivePort = null; });
+            } catch (_) {
+              // Context invalidated — that's fine, SW will manage its own life cycle
+            }
+          }
+        } else {
           // Polling stopped — clean up countdown and keep-alive
           clearInterval(pollingCountdownTimer);
           pollingCountdownTimer = null;
@@ -1533,6 +1664,41 @@
       .wsn-polling-bar__stop:hover {
         background: rgba(220,38,38,0.15);
         border-color: #DC2626;
+      }
+
+      /* Session memory bar */
+      .wsn-memory-bar {
+        padding: 8px 20px 12px 20px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+      }
+      .wsn-memory-bar__label {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: #666;
+        margin-bottom: 5px;
+        font-weight: 500;
+      }
+      .wsn-memory-bar__label span:last-child { color: #aaa; }
+      .wsn-memory-bar__track {
+        height: 4px;
+        background: #1a1a1a;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .wsn-memory-bar__fill {
+        height: 100%;
+        background: #22C55E;
+        border-radius: 2px;
+        transition: width 0.4s ease, background 0.3s;
+      }
+      .wsn-memory-bar__fill--warning { background: #F59E0B; }
+      .wsn-memory-bar__fill--danger  { background: #DC2626; }
+      .wsn-memory-bar__hint {
+        margin-top: 4px;
+        font-size: 10px;
+        color: #555;
+        line-height: 1.4;
       }
 
       /* Controls bar */
@@ -2208,6 +2374,99 @@
         font-family: inherit;
       }
       .wsn-btn--primary-sm:hover { opacity: 0.85; }
+
+      /* ─── Image Preview Lightbox ─── */
+      .wsn-lightbox {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        pointer-events: auto;
+      }
+      .wsn-lightbox-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.88);
+        cursor: zoom-out;
+      }
+      .wsn-lightbox-dialog {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        max-width: min(90vw, 900px);
+        max-height: 90vh;
+        padding: 20px;
+        z-index: 1;
+      }
+      .wsn-lightbox-img {
+        max-width: 100%;
+        max-height: calc(90vh - 80px);
+        object-fit: contain;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        box-shadow: 0 8px 40px rgba(0, 0, 0, 0.7);
+        display: block;
+      }
+      .wsn-lightbox-caption {
+        color: rgba(255, 255, 255, 0.75);
+        font-size: 13px;
+        text-align: center;
+        max-width: 500px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .wsn-lightbox-close {
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        width: 32px;
+        height: 32px;
+        background: #111;
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        border-radius: 50%;
+        color: #fff;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 150ms ease;
+        font-family: inherit;
+        padding: 0;
+      }
+      .wsn-lightbox-close:hover { background: #333; }
+      .wsn-lightbox-close:focus { outline: 2px solid #fff; outline-offset: 2px; }
+      .wsn-lightbox-nav {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 40px;
+        height: 40px;
+        background: rgba(0, 0, 0, 0.6);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        border-radius: 50%;
+        color: #fff;
+        font-size: 24px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 150ms ease, opacity 150ms ease;
+        font-family: inherit;
+        padding: 0;
+      }
+      .wsn-lightbox-nav:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
+      .wsn-lightbox-nav:disabled { opacity: 0.25; cursor: default; }
+      .wsn-lightbox-prev { left: -52px; }
+      .wsn-lightbox-next { right: -52px; }
 
 
     `;

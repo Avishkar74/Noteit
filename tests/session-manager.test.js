@@ -162,7 +162,7 @@ describe('SessionManager', () => {
       await SessionManager.startSession('Test');
 
       const session = await SessionManager.getSession();
-      session.memoryUsage = 200 * 1024 * 1024; // at limit
+      session.memoryUsage = WSN_CONSTANTS.MEMORY_LIMIT; // at limit
       await StorageManager.saveSession(session);
 
       const result = await SessionManager.addScreenshot(fakeDataUrl);
@@ -173,7 +173,7 @@ describe('SessionManager', () => {
       await SessionManager.startSession('Test');
 
       const session = await SessionManager.getSession();
-      session.memoryUsage = 200 * 1024 * 1024 * 0.81; // 81%
+      session.memoryUsage = WSN_CONSTANTS.MEMORY_LIMIT * 0.81; // 81%
       await StorageManager.saveSession(session);
 
       const result = await SessionManager.addScreenshot(fakeDataUrl);

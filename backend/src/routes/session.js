@@ -8,7 +8,7 @@
 
 const express = require('express');
 const QRCode = require('qrcode');
-const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining, isSessionValid, isUploadWindowOpen, markUploadsClosed } = require('../services/session-store');
+const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining, isSessionValid, isUploadWindowOpen, markUploadsClosed, setReservedBytes, BACKEND_MEMORY_LIMIT, MAX_IMAGES_PER_SESSION } = require('../services/session-store');
 
 const router = express.Router();
 
@@ -53,11 +53,18 @@ router.get('/:id', (req, res) => {
 
   const daysRemaining = getDaysRemaining(req.params.id);
 
+  const imagesUploaded = session.images.length;
+  const imagesRemaining = Math.max(0, MAX_IMAGES_PER_SESSION - imagesUploaded);
   res.json({
-    imageCount: session.images.length,
+    imageCount: imagesUploaded,
+    imagesUploaded,
+    imagesRemaining,
+    maxImages: MAX_IMAGES_PER_SESSION,
     createdAt: session.createdAt,
     uploadExpiresAt: session.uploadExpiresAt,
     daysRemaining,
+    memoryUsage: (session.totalBytes || 0) + (session.reservedBytes || 0),
+    memoryLimit: BACKEND_MEMORY_LIMIT,
   });
 });
 
@@ -105,6 +112,31 @@ router.get('/:id/valid', (req, res) => {
   const valid = isSessionValid(req.params.id);
   const windowOpen = valid ? isUploadWindowOpen(req.params.id) : false;
   res.json({ valid, uploadWindowOpen: windowOpen });
+});
+
+// Sync laptop screenshot bytes from the extension so the phone page sees combined usage
+router.post('/:id/sync-memory', (req, res) => {
+  const reservedBytes = parseInt(req.body && req.body.reservedBytes, 10);
+  if (isNaN(reservedBytes) || reservedBytes < 0) {
+    return res.status(400).json({ error: 'reservedBytes must be a non-negative integer.' });
+  }
+  const ok = setReservedBytes(req.params.id, reservedBytes);
+  if (!ok) {
+    return res.status(404).json({ error: 'Session not found or expired.' });
+  }
+  // Push the new combined total to the phone page in real-time
+  const session = getSession(req.params.id);
+  if (session) {
+    const memoryUsage = (session.totalBytes || 0) + (session.reservedBytes || 0);
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`session:${req.params.id}`).emit('memory-updated', {
+        memoryUsage,
+        memoryLimit: BACKEND_MEMORY_LIMIT,
+      });
+    }
+  }
+  res.json({ success: true });
 });
 
 // Close uploads for a session (from extension when ending/stopping)

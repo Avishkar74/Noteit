@@ -9,15 +9,15 @@
 const express = require('express');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
-const { getSession, validateToken, addImage, isUploadWindowOpen } = require('../services/session-store');
+const { getSession, validateToken, addImage, isUploadWindowOpen, MAX_IMAGES_PER_SESSION } = require('../services/session-store');
 
 const router = express.Router();
 
-// Rate limit for uploads: 60 uploads per minute per session
+// Rate limit for uploads: 40 uploads per minute per session
 const uploadLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 60,
-  message: { error: 'Upload rate limit exceeded (60 per minute). Please wait.' },
+  max: 40,
+  message: { error: 'Upload rate limit exceeded (40 per minute). Please wait.' },
   skip: () => process.env.NODE_ENV === 'test',
   keyGenerator: (req) => {
     return req.params.sessionId || req.ip;
@@ -69,7 +69,20 @@ router.post('/:sessionId', uploadLimiter, upload.single('image'), async (req, re
 
     const result = addImage(sessionId, dataUrl, '');
     if (result.error) {
-      return res.status(400).json({ error: result.error });
+      if (result.error === 'SESSION_IMAGE_LIMIT_REACHED') {
+        return res.status(409).json({
+          error: result.error,
+          imagesUploaded: result.imagesUploaded,
+          imagesRemaining: 0,
+          maxImages: MAX_IMAGES_PER_SESSION,
+          message: `Session image limit reached (${MAX_IMAGES_PER_SESSION} images). Scan the QR code again from the extension to start a new upload session.`,
+        });
+      }
+      return res.status(400).json({
+        error: result.error,
+        memoryUsage: result.memoryUsage,
+        memoryLimit: result.memoryLimit,
+      });
     }
 
     // Notify extension via Socket.io immediately
@@ -81,7 +94,14 @@ router.post('/:sessionId', uploadLimiter, upload.single('image'), async (req, re
       });
     }
 
-    res.json({ success: true, imageCount: result.imageCount });
+    res.json({
+      success: true,
+      imageCount: result.imageCount,
+      imagesUploaded: result.imagesUploaded,
+      imagesRemaining: result.imagesRemaining,
+      memoryUsage: result.memoryUsage,
+      memoryLimit: result.memoryLimit,
+    });
   } catch (err) {
     console.error('Upload processing error:', err.message);
     return res.status(500).json({ error: 'Failed to process image.' });

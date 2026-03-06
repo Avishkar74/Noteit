@@ -1,9 +1,7 @@
 # ─── Stage 1: Build ──────────────────────────
 FROM node:20-alpine AS builder
 
-# Sharp requires native libs on Alpine
-RUN apk add --no-cache libc6-compat
-
+# Builder stage: install node deps and copy source
 WORKDIR /app
 
 COPY backend/package*.json ./
@@ -13,9 +11,6 @@ COPY backend/src ./src
 
 # ─── Stage 2: Production ────────────────────
 FROM node:20-alpine
-
-# Sharp runtime deps
-RUN apk add --no-cache libc6-compat
 
 RUN addgroup -S wsn && adduser -S wsn -G wsn
 
@@ -28,7 +23,8 @@ USER wsn
 
 EXPOSE 3000
 
+# Healthcheck: use a lightweight Node-based probe to avoid requiring wget/curl
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
+  CMD node -e "require('http').get('http://localhost:3000/api/health', res => res.resume())" || exit 1
 
 CMD ["node", "src/index.js"]

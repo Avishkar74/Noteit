@@ -11,7 +11,7 @@
 const WSN_CONSTANTS = {
   // Session limits
   MAX_SCREENSHOTS: 100,
-  MEMORY_LIMIT: 200 * 1024 * 1024, // 200 MB
+  MEMORY_LIMIT: 200 * 1024 * 1024, // 200 MB — shared across laptop screenshots and phone uploads
   MEMORY_WARNING_THRESHOLD: 0.8,    // 80%
 
   // Upload window duration (how long phone can upload after QR scan)
@@ -21,7 +21,7 @@ const WSN_CONSTANTS = {
   // OCR is now processed locally in the extension.
   // For local development: 'http://localhost:3000'
   // For production: 'https://your-app.up.railway.app'
-  BACKEND_URL: 'http://10.223.150.34:3000',
+  BACKEND_URL: 'http://192.168.1.9:3000',
 
   // Session statuses
   STATUS: {

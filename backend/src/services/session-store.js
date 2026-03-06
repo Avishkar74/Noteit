@@ -9,6 +9,8 @@ const { v4: uuidv4 } = require('uuid');
 const SESSION_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const UPLOAD_WINDOW_MS = 3 * 60 * 1000; // 3-minute upload window
 const MAX_SESSIONS = 100;
+const BACKEND_MEMORY_LIMIT = 200 * 1024 * 1024; // 200 MB per session
+const MAX_IMAGES_PER_SESSION = 40; // matches frontend rate-limit cap
 
 // In-memory store: sessionId → { token, createdAt, images[], ocrTexts[] }
 const sessions = new Map();
@@ -34,6 +36,8 @@ function createSession(name) {
     uploadExpiresAt: now + UPLOAD_WINDOW_MS,
     images: [],
     ocrTexts: [],
+    totalBytes: 0,    // running tally of phone-uploaded image bytes
+    reservedBytes: 0, // laptop screenshot bytes synced from the extension
   });
 
   return { sessionId, token };
@@ -62,17 +66,54 @@ function addImage(sessionId, imageData, ocrText) {
   const session = getSession(sessionId);
   if (!session) return { error: 'SESSION_NOT_FOUND' };
 
+  // Enforce per-session image count limit — resets only when a new session is created
+  if (session.images.length >= MAX_IMAGES_PER_SESSION) {
+    return {
+      error: 'SESSION_IMAGE_LIMIT_REACHED',
+      imagesUploaded: session.images.length,
+      imagesRemaining: 0,
+    };
+  }
+
+  // Estimate raw bytes from base64-encoded data URL (base64 encodes 3 bytes as 4 chars)
+  const base64Match = imageData.match(/^data:[^;]+;base64,(.+)$/);
+  const imageBytes = base64Match
+    ? Math.ceil(base64Match[1].length * 0.75)
+    : Math.ceil(imageData.length * 0.75);
+
+  // Reject if this image would push combined (phone + laptop) bytes over the 200 MB cap
+  const combinedBytes = (session.totalBytes || 0) + (session.reservedBytes || 0);
+  if (combinedBytes + imageBytes > BACKEND_MEMORY_LIMIT) {
+    return {
+      error: 'SESSION_MEMORY_LIMIT_REACHED',
+      memoryUsage: combinedBytes,
+      memoryLimit: BACKEND_MEMORY_LIMIT,
+    };
+  }
+
   session.images.push({
     id: uuidv4(),
     data: imageData,
     addedAt: Date.now(),
   });
 
+  session.totalBytes = (session.totalBytes || 0) + imageBytes;
+
   // Store OCR text in parallel array
   if (!session.ocrTexts) session.ocrTexts = [];
   session.ocrTexts.push(ocrText || '');
 
-  return { success: true, imageCount: session.images.length };
+  const totalCombined = session.totalBytes + (session.reservedBytes || 0);
+  const imagesUploaded = session.images.length;
+  const imagesRemaining = Math.max(0, MAX_IMAGES_PER_SESSION - imagesUploaded);
+  return {
+    success: true,
+    imageCount: imagesUploaded,
+    imagesUploaded,
+    imagesRemaining,
+    memoryUsage: totalCombined,
+    memoryLimit: BACKEND_MEMORY_LIMIT,
+  };
 }
 
 function getImages(sessionId) {
@@ -89,6 +130,20 @@ function getOcrTexts(sessionId) {
 
 function deleteSession(sessionId) {
   sessions.delete(sessionId);
+}
+
+/**
+ * Update the number of bytes reserved by the extension (laptop screenshots).
+ * Called by the service worker whenever the extension's memory usage changes.
+ * This allows the phone page to see the true combined memory consumption.
+ * @param {string} sessionId
+ * @param {number} bytes - current total laptop screenshot bytes
+ */
+function setReservedBytes(sessionId, bytes) {
+  const session = getSession(sessionId);
+  if (!session) return false;
+  session.reservedBytes = Math.max(0, bytes || 0);
+  return true;
 }
 
 /**
@@ -164,9 +219,12 @@ module.exports = {
   isSessionValid,
   isUploadWindowOpen,
   markUploadsClosed,
+  setReservedBytes,
   cleanupExpiredSessions,
   getSessionCount,
   getDaysRemaining,
+  BACKEND_MEMORY_LIMIT,
+  MAX_IMAGES_PER_SESSION,
   SESSION_EXPIRY_MS,
   UPLOAD_WINDOW_MS,
 };

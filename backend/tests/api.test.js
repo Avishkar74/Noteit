@@ -187,6 +187,63 @@ describe('API Routes', () => {
       expect(res.status).toBe(400);
       store.deleteSession(sessionId);
     });
+
+    test('upload response includes imagesUploaded and imagesRemaining', async () => {
+      const { sessionId, token } = store.createSession();
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      const res = await request(app)
+        .post(`/api/upload/${sessionId}`)
+        .set('X-Upload-Token', token)
+        .attach('image', pngBuffer, 'test.png');
+      expect(res.status).toBe(200);
+      expect(res.body.imagesUploaded).toBe(1);
+      expect(res.body.imagesRemaining).toBe(store.MAX_IMAGES_PER_SESSION - 1);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns 409 with SESSION_IMAGE_LIMIT_REACHED when session is full', async () => {
+      const { sessionId, token } = store.createSession();
+      // Fill session to the limit directly via store
+      for (let i = 0; i < store.MAX_IMAGES_PER_SESSION; i++) {
+        store.addImage(sessionId, 'data:image/png;base64,abc');
+      }
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      const res = await request(app)
+        .post(`/api/upload/${sessionId}`)
+        .set('X-Upload-Token', token)
+        .attach('image', pngBuffer, 'test.png');
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('SESSION_IMAGE_LIMIT_REACHED');
+      expect(res.body.imagesUploaded).toBe(store.MAX_IMAGES_PER_SESSION);
+      expect(res.body.imagesRemaining).toBe(0);
+      expect(res.body.message).toBeDefined();
+      store.deleteSession(sessionId);
+    });
+
+    test('GET /api/session/:id returns imagesUploaded and imagesRemaining', async () => {
+      const { sessionId, token } = store.createSession();
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      // Upload one image
+      await request(app)
+        .post(`/api/upload/${sessionId}`)
+        .set('X-Upload-Token', token)
+        .attach('image', pngBuffer, 'test.png');
+      const res = await request(app).get(`/api/session/${sessionId}`);
+      expect(res.status).toBe(200);
+      expect(res.body.imagesUploaded).toBe(1);
+      expect(res.body.imagesRemaining).toBe(store.MAX_IMAGES_PER_SESSION - 1);
+      expect(res.body.maxImages).toBe(store.MAX_IMAGES_PER_SESSION);
+      store.deleteSession(sessionId);
+    });
   });
 
   // ─── Upload Page ─────────────────────────

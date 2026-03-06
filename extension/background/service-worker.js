@@ -90,16 +90,42 @@ async function runWithConcurrency(tasks, limit) {
 
 // ─── QR Upload Session State ────────────────────────
 let uploadSession = null;   // { sessionId, token, qrCode, uploadUrl, pollTimer, uploadExpiresAt, tabId }
+let disconnecting = false;  // true while disconnectUploadSession() is awaiting — prevents port.onDisconnect race
 
 // Keep-alive port: content script opens a long-lived connection so the
 // service worker stays awake while polling for phone uploads.
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name === 'qr-upload-keepalive') {
-    // Keep a reference so GC doesn't collect the port
+    // Keep a reference so GC doesn't collect the port.
+    // NOTE: do NOT call stopPolling() unconditionally on disconnect.
+    // The content script disconnects the port during session transitions
+    // (when CREATE_UPLOAD_SESSION broadcasts POLLING_STATE_CHANGED false and
+    // the content script calls qrKeepAlivePort.disconnect()). At that moment,
+    // startPolling() for the NEW session may have already set a new pollTimer.
+    // Calling stopPolling() here would kill the new timer (race condition).
+    // Instead: only stop if there is genuinely no active poll timer running.
     port.onDisconnect.addListener(() => {
-      // Content script navigated away or extension was reloaded – stop polling
-      stopPolling();
+      // Guard against the race where content.js disconnects the port as a side
+      // effect of receiving POLLING_STATE_CHANGED false during CREATE_UPLOAD_SESSION.
+      // If we're mid-disconnect (closeUploadSession is running), the timer will
+      // be null but the session is being rebuilt — don't stop the new one.
+      if (disconnecting) return;
+      if (!uploadSession || !uploadSession.pollTimer) {
+        // No active session / timer — safe to stop (user navigated away, etc.)
+        stopPolling();
+      }
+      // If uploadSession.pollTimer is set, a new session is already polling —
+      // leave it running. It will self-stop when the upload window expires,
+      // the user clicks Stop, or the monitored tab is closed.
     });
+  }
+});
+
+// Stop polling when the tab that initiated the upload session is closed.
+chrome.tabs.onRemoved.addListener((removedTabId) => {
+  if (uploadSession && uploadSession.tabId === removedTabId) {
+    stopPolling();
+    uploadSession = null;
   }
 });
 
@@ -155,6 +181,33 @@ async function fetchUploadedImage(sessionId, imageIndex) {
   }
 }
 
+/**
+ * Push the current extension session's memoryUsage (laptop screenshots) to the backend
+ * so the phone page sees the true combined total and the backend enforces the right limit.
+ * Fire-and-forget: failures are silently ignored.
+ */
+async function syncMemoryToBackend() {
+  if (!uploadSession) return;
+  try {
+    const session = await SessionManager.getSession();
+    // session.memoryUsage includes both laptop screenshots AND phone images that were pulled
+    // down via the poll loop into the extension's local session. The backend's totalBytes
+    // already counts those same phone images, so we must subtract phone bytes to avoid
+    // double-counting when the phone page shows: totalBytes + reservedBytes.
+    const totalExtension = (session && session.memoryUsage) || 0;
+    const phoneBytes = uploadSession.phoneBytesInExtension || 0;
+    const reservedBytes = Math.max(0, totalExtension - phoneBytes);
+    const backendUrl = getBackendUrl();
+    await fetch(`${backendUrl}/api/session/${uploadSession.sessionId}/sync-memory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reservedBytes }),
+    });
+  } catch {
+    // Non-critical — phone may show slightly stale memory until next sync
+  }
+}
+
 function startPolling(tabId) {
   if (!uploadSession) return;
 
@@ -186,31 +239,77 @@ function startPolling(tabId) {
       const info = await pollForImages(uploadSession.sessionId, uploadSession.lastImageCount || 0);
 
       if (info.imageCount > (uploadSession.lastImageCount || 0)) {
-        // New images available — fetch and store them
-        let newCount = uploadSession.lastImageCount || 0;
-        for (let i = (uploadSession.lastImageCount || 0); i < info.imageCount; i++) {
-          const dataUrl = await fetchUploadedImage(uploadSession.sessionId, i);
-          if (dataUrl) {
+        // New images available — fetch in parallel batches of 5, then store sequentially
+        const startIndex = uploadSession.lastImageCount || 0;
+        const endIndex = info.imageCount;
+        const BATCH_SIZE = 5;
+        let newCount = startIndex;
+        let fatalError = false; // NO_ACTIVE_SESSION — no point continuing
+
+        for (let batchStart = startIndex; batchStart < endIndex && !fatalError; batchStart += BATCH_SIZE) {
+          const batchEnd = Math.min(batchStart + BATCH_SIZE, endIndex);
+          const indices = [];
+          for (let i = batchStart; i < batchEnd; i++) indices.push(i);
+
+          // Fetch this batch in parallel
+          const fetchedUrls = await Promise.all(
+            indices.map(i => fetchUploadedImage(uploadSession.sessionId, i))
+          );
+
+          // Store each fetched image sequentially
+          for (let j = 0; j < indices.length; j++) {
+            const i = indices[j];
+            const dataUrl = fetchedUrls[j];
+
+            if (!dataUrl) {
+              // Fetch failed — stop here so we retry from this index next poll
+              fatalError = true;
+              break;
+            }
+
             const result = await SessionManager.addScreenshot(dataUrl, {
               url: 'phone-upload',
               tabTitle: 'Phone Upload',
             });
 
-            if (result && result.success && tabId) {
-              uploadSession.phoneUploadCount = (uploadSession.phoneUploadCount || 0) + 1;
-              sendToTab(tabId, {
-                type: MSG.PHONE_IMAGE_RECEIVED,
-                count: uploadSession.phoneUploadCount,
-              });
+            if (result && result.success) {
+              // Track phone image bytes to avoid double-counting in syncMemoryToBackend.
+              // base64 chars → raw bytes: each char encodes 6 bits → length * 6/8 = length * 0.75
+              const base64Part = dataUrl.indexOf(',') !== -1 ? dataUrl.split(',')[1] : dataUrl;
+              const phoneImageBytes = Math.ceil(base64Part.length * 0.75);
+              uploadSession.phoneBytesInExtension = (uploadSession.phoneBytesInExtension || 0) + phoneImageBytes;
+
+              newCount = i + 1;
+              if (tabId) {
+                uploadSession.phoneUploadCount = (uploadSession.phoneUploadCount || 0) + 1;
+                sendToTab(tabId, {
+                  type: MSG.PHONE_IMAGE_RECEIVED,
+                  count: uploadSession.phoneUploadCount,
+                });
+              }
+            } else if (result.error === 'NO_ACTIVE_SESSION') {
+              // Session ended — no point retrying
+              fatalError = true;
+              break;
+            } else {
+              // MEMORY_LIMIT_REACHED or MAX_SCREENSHOTS_REACHED — skip this image,
+              // advance past it so we don't retry infinitely, and stop the batch
+              newCount = i + 1;
+              fatalError = true;
+              break;
             }
-            newCount = i + 1; // only advance past images we successfully fetched
-          }
-          // If fetch failed, stop here so we retry from this index next poll
-          else {
-            break;
           }
         }
+
         if (uploadSession) uploadSession.lastImageCount = newCount;
+
+        // Send a final refresh signal so the panel shows everything stored so far
+        if (newCount > startIndex && tabId) {
+          sendToTab(tabId, {
+            type: MSG.PHONE_IMAGE_RECEIVED,
+            count: uploadSession ? (uploadSession.phoneUploadCount || 0) : 0,
+          });
+        }
       }
     } catch (pollErr) {
       console.warn('Snabby: poll tick error', pollErr);
@@ -248,27 +347,33 @@ function broadcastPollingState(tabId, isPolling) {
 /**
  * Disconnect from upload session – stop polling and forget session reference.
  * Does NOT delete the backend session (preserves uploaded images for saved sessions).
- * Marks uploads as closed on backend so phone page stops accepting uploads.
+ * @param {boolean} [notifyBackend=true] - when false, skips the close-uploads call.
+ *   Set to false when CREATE_UPLOAD_SESSION abandons an old session so stale phone
+ *   pages don't receive 'uploads-closed' and show the "Polling Session Stopped" overlay.
  */
-async function disconnectUploadSession() {
+async function disconnectUploadSession(notifyBackend = true) {
   if (!uploadSession) return;
   const sessionId = uploadSession.sessionId;
+  disconnecting = true;
   stopPolling();
   uploadSession = null;
 
-  // Notify backend to close the upload window (phone will detect this)
-  if (sessionId) {
+  // Notify backend to close the upload window (phone page detects via Socket.io)
+  if (notifyBackend && sessionId) {
     const backendUrl = getBackendUrl();
     try {
       await fetch(`${backendUrl}/api/session/${sessionId}/close-uploads`, { method: 'POST' });
     } catch { /* best effort */ }
   }
+  disconnecting = false;
 }
 
 async function closeUploadSession() {
-  // Only disconnect – don't delete backend session
-  // Backend sessions persist with 7-day expiry for the saved sessions feature.
-  disconnectUploadSession();
+  // Called by CREATE_UPLOAD_SESSION when replacing a previous session.
+  // Skip the backend close-uploads call so any phone page still open on the
+  // OLD session URL doesn't receive 'uploads-closed' and show the stopped overlay.
+  // The old backend session expires naturally after 7 days.
+  await disconnectUploadSession(false);
 }
 
 // ─── Extension Icon Click (Activation Toggle) ───────
@@ -351,6 +456,9 @@ chrome.commands.onCommand.addListener(async (command) => {
         return;
       }
 
+      // Sync updated laptop bytes to backend (fire-and-forget)
+      syncMemoryToBackend();
+
       sendToTab(tab.id, {
         type: MSG.CAPTURE_COMPLETE,
         count: result.count,
@@ -411,7 +519,7 @@ async function handleMessage(request, sender) {
 
   case MSG.END_SESSION: {
     // Disconnect from upload session (stop polling, DON'T delete backend data)
-    disconnectUploadSession();
+    await disconnectUploadSession();
     await SessionManager.endSession();
     await SessionManager.clearSessionData();
     return { success: true };
@@ -449,6 +557,9 @@ async function handleMessage(request, sender) {
     if (result.error) {
       return { error: result.error, message: getErrorMessage(result.error) };
     }
+
+    // Sync updated laptop bytes to backend (fire-and-forget)
+    syncMemoryToBackend();
 
     if (tabId) {
       sendToTab(tabId, {
@@ -622,7 +733,11 @@ async function handleMessage(request, sender) {
       uploadUrl: data.uploadUrl,
       lastImageCount: 0,
       pollTimer: null,
+      phoneBytesInExtension: 0, // Track phone image bytes stored locally to avoid double-counting in syncMemoryToBackend
     };
+
+    // Sync laptop screenshot bytes so the phone page shows the true combined usage
+    await syncMemoryToBackend();
 
     // Start polling for new images
     if (tabId) {
@@ -638,8 +753,8 @@ async function handleMessage(request, sender) {
   }
 
   case MSG.CLOSE_UPLOAD_SESSION: {
-    // Just disconnect — don't delete backend session (preserves for saved sessions)
-    disconnectUploadSession();
+    // Just disconnect — don't notify phone or delete backend session (preserves for saved sessions)
+    await disconnectUploadSession(false);
     return { success: true };
   }
 

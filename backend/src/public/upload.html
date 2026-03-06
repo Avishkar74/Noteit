@@ -66,6 +66,38 @@
       color: #555;
       margin-bottom: 20px;
     }
+    /* Quota indicator */
+    .quota-indicator {
+      background: rgba(34,197,94,0.08);
+      border: 1px solid rgba(34,197,94,0.25);
+      border-radius: 10px;
+      padding: 10px 14px;
+      margin-top: 12px;
+      font-size: 13px;
+      color: #aaa;
+      text-align: center;
+      display: none;
+    }
+    .quota-indicator.visible { display: block; }
+    .quota-indicator strong { color: #22C55E; font-weight: 700; }
+    .quota-indicator.warning { border-color: rgba(245,158,11,0.35); background: rgba(245,158,11,0.08); }
+    .quota-indicator.warning strong { color: #F59E0B; }
+    .quota-indicator.limit-reached { border-color: rgba(220,38,38,0.4); background: rgba(220,38,38,0.08); }
+    .quota-indicator.limit-reached strong { color: #DC2626; }
+    /* QR rescan hint */
+    .qr-hint {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 12px 16px;
+      margin-top: 10px;
+      font-size: 13px;
+      color: #aaa;
+      text-align: center;
+      line-height: 1.6;
+      display: none;
+    }
+    .qr-hint.visible { display: block; }
     .upload-area {
       border: 2px dashed #333;
       border-radius: 16px;
@@ -129,6 +161,42 @@
       color: #aaa;
     }
     .upload-counter span { color: #fff; }
+    /* Memory usage bar */
+    .memory-bar {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid #333;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-top: 12px;
+      font-size: 12px;
+      color: #aaa;
+    }
+    .memory-bar__label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .memory-bar__label span:last-child { color: #fff; font-weight: 600; }
+    .memory-bar__track {
+      height: 6px;
+      background: #222;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .memory-bar__fill {
+      height: 100%;
+      background: #22C55E;
+      border-radius: 3px;
+      transition: width 0.3s, background 0.3s;
+    }
+    .memory-bar__fill--warning { background: #F59E0B; }
+    .memory-bar__fill--danger { background: #DC2626; }
+    .memory-bar__hint {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #666;
+      line-height: 1.5;
+    }
     .btn-row {
       display: flex;
       gap: 10px;
@@ -182,7 +250,7 @@
       <span class="timer-text">Time remaining: <span class="time" id="timerText">3:00</span></span>
     </div>
 
-    <p class="rate-notice">Max 60 images per minute · JPG, PNG, WEBP · 10MB each</p>
+    <p class="rate-notice">Max 40 images · JPG, PNG, WEBP · 10 MB each · 200 MB session limit</p>
 
     <!-- Session ended overlay -->
     <div class="overlay-msg" id="sessionEnded">
@@ -217,7 +285,23 @@
       </div>
 
       <div class="upload-counter" id="uploadCounter" style="display:none">
-        <span id="counterText">0</span> photo(s) uploaded
+        <span id="counterText">0</span> photo(s) uploaded this session
+      </div>
+      <div class="quota-indicator" id="quotaIndicator">
+        You can upload <strong id="remainingCount">40</strong> more image(s) — <span id="sessionQuota">0 / 40 used</span>
+      </div>
+      <div class="qr-hint" id="qrHint">
+        📱 Scan the QR code again from the extension to start a new upload session with a fresh quota.
+      </div>
+      <div class="memory-bar" id="memoryBar" style="display:none">
+        <div class="memory-bar__label">
+          <span>Session memory</span>
+          <span id="memoryText">0 MB / 200 MB</span>
+        </div>
+        <div class="memory-bar__track">
+          <div class="memory-bar__fill" id="memoryFill" style="width:0%"></div>
+        </div>
+        <div class="memory-bar__hint" id="memoryHint">200 MB remaining</div>
       </div>
       <div class="status" id="status" style="display:none"></div>
     </div>
@@ -240,9 +324,22 @@
     const windowExpired = document.getElementById('windowExpired');
     const timerBar = document.getElementById('timerBar');
     const timerText = document.getElementById('timerText');
+    const memoryBar = document.getElementById('memoryBar');
+    const memoryText = document.getElementById('memoryText');
+    const memoryFill = document.getElementById('memoryFill');
+    const memoryHint = document.getElementById('memoryHint');
+    const quotaIndicator = document.getElementById('quotaIndicator');
+    const remainingCountEl = document.getElementById('remainingCount');
+    const sessionQuotaEl = document.getElementById('sessionQuota');
+    const qrHint = document.getElementById('qrHint');
     let totalUploads = 0;
+    let imagesUploaded = 0;   // per-session upload count (from server)
+    let maxImages = 40;        // per-session quota (from server)
+    let imageLimitReached = false;
     let sessionValid = true;
     let uploadWindowOpen = true;
+    let memoryLimitReached = false;
+    let sessionMemoryLimit = 200 * 1024 * 1024; // updated from server on load
     let uploadExpiresAt = Date.now() + 3 * 60 * 1000; // fallback
 
     dropZone.addEventListener('click', () => galleryInput.click());
@@ -270,8 +367,34 @@
       const files = Array.from(fileList);
       if (files.length === 0) return;
 
+      if (memoryLimitReached) {
+        showStatus('Memory limit reached. Download your PDF and start a new session.', 'error');
+        return;
+      }
       if (!uploadWindowOpen) {
         showStatus('Upload window expired. Scan QR code again.', 'error');
+        return;
+      }
+      if (imageLimitReached) {
+        showStatus(`Session image limit reached (${maxImages} images). Scan the QR code again to upload more.`, 'warning');
+        showQrHint();
+        return;
+      }
+
+      // Pre-flight quota check — block the entire selection if it exceeds remaining quota.
+      // This prevents partial uploads (e.g. 62 selected, 40 allowed) which leave the user confused.
+      const remaining = maxImages - imagesUploaded;
+      if (remaining <= 0) {
+        markImageLimitReached();
+        return;
+      }
+      if (files.length > remaining) {
+        const plural = files.length !== 1 ? 's' : '';
+        showStatus(
+          `You selected ${files.length} image${plural} but can only upload ${remaining} more in this session. Please select ${remaining} or fewer.`,
+          'error'
+        );
+        showQrHint();
         return;
       }
 
@@ -280,8 +403,16 @@
           showStatus('Session ended. Uploads disabled.', 'error');
           return;
         }
+        if (memoryLimitReached) {
+          showStatus('Memory limit reached. Download your PDF and start a new session.', 'error');
+          return;
+        }
         if (!uploadWindowOpen) {
           showStatus('Upload window expired. Remaining images not uploaded.', 'warning');
+          return;
+        }
+        if (imageLimitReached) {
+          markImageLimitReached();
           return;
         }
         showStatus(`Uploading ${i + 1} of ${files.length}...`, '');
@@ -290,7 +421,7 @@
     }
 
     async function uploadFile(file) {
-      if (!sessionValid || !uploadWindowOpen) {
+      if (!sessionValid || !uploadWindowOpen || memoryLimitReached) {
         showStatus('Uploads disabled.', 'error');
         return;
       }
@@ -312,15 +443,28 @@
         const data = await res.json();
         if (res.ok && data.success) {
           totalUploads = data.imageCount;
+          imagesUploaded = typeof data.imagesUploaded === 'number' ? data.imagesUploaded : imagesUploaded + 1;
+          const remaining = typeof data.imagesRemaining === 'number' ? data.imagesRemaining : Math.max(0, maxImages - imagesUploaded);
           updateCounter();
-          showStatus(`✓ Uploaded! (${totalUploads} total)`, 'success');
+          updateQuotaIndicator(remaining);
+          updateMemoryBar(data.memoryUsage, data.memoryLimit);
+          showStatus(`✓ Uploaded! (${totalUploads} total, ${remaining} more allowed)`, 'success');
+          if (remaining === 0) {
+            markImageLimitReached();
+          }
         } else {
           if (res.status === 404) {
             markSessionEnded();
           } else if (res.status === 403 && data.error && data.error.includes('window expired')) {
             markWindowExpired();
+          } else if (res.status === 409) {
+            // Session image limit reached — the image was NOT stored
+            imagesUploaded = typeof data.imagesUploaded === 'number' ? data.imagesUploaded : imagesUploaded;
+            markImageLimitReached();
           } else if (res.status === 429) {
-            showStatus('Rate limit reached (40/min). Wait a moment and try again.', 'warning');
+            showStatus('Too many requests. Please wait a moment and try again.', 'warning');
+          } else if (data.error === 'SESSION_MEMORY_LIMIT_REACHED') {
+            markMemoryLimitReached(data.memoryUsage, data.memoryLimit);
           } else {
             showStatus(data.error || 'Upload failed.', 'error');
           }
@@ -333,6 +477,53 @@
     function updateCounter() {
       uploadCounter.style.display = 'block';
       counterText.textContent = totalUploads;
+    }
+
+    function updateQuotaIndicator(remaining) {
+      remaining = Math.max(0, remaining);
+      quotaIndicator.className = 'quota-indicator visible';
+      remainingCountEl.textContent = remaining;
+      if (sessionQuotaEl) sessionQuotaEl.textContent = `${imagesUploaded} / ${maxImages} used`;
+      if (remaining === 0) {
+        quotaIndicator.className = 'quota-indicator visible limit-reached';
+      } else if (remaining <= 10) {
+        quotaIndicator.className = 'quota-indicator visible warning';
+      }
+    }
+
+    function showQrHint() {
+      qrHint.classList.add('visible');
+    }
+
+    function markImageLimitReached() {
+      imageLimitReached = true;
+      updateQuotaIndicator(0);
+      showStatus(`Session image limit reached (${maxImages} images). Scan the QR code again to upload more.`, 'warning');
+      showQrHint();
+    }
+
+    function updateMemoryBar(usageBytes, limitBytes) {
+      const limit = limitBytes || sessionMemoryLimit;
+      const usage = usageBytes || 0;
+      const pct = Math.min(100, (usage / limit) * 100);
+      const usageMB = (usage / (1024 * 1024)).toFixed(1);
+      const limitMB = Math.round(limit / (1024 * 1024));
+      const remainMB = Math.max(0, (limit - usage) / (1024 * 1024)).toFixed(1);
+      memoryBar.style.display = 'block';
+      memoryText.textContent = `${usageMB} MB / ${limitMB} MB`;
+      memoryFill.style.width = `${pct}%`;
+      memoryFill.className = 'memory-bar__fill';
+      if (pct >= 90) memoryFill.classList.add('memory-bar__fill--danger');
+      else if (pct >= 70) memoryFill.classList.add('memory-bar__fill--warning');
+      memoryHint.textContent = `${remainMB} MB remaining`;
+    }
+
+    function markMemoryLimitReached(usageBytes, limitBytes) {
+      memoryLimitReached = true;
+      updateMemoryBar(usageBytes || sessionMemoryLimit, limitBytes || sessionMemoryLimit);
+      memoryFill.className = 'memory-bar__fill memory-bar__fill--danger';
+      memoryHint.textContent = '⚠️ Session memory full (200 MB). Download the PDF from the extension and start a new session to upload more images.';
+      showStatus('⚠️ Memory limit reached. No more uploads allowed in this session.', 'error');
     }
 
     function showStatus(msg, type) {
@@ -404,6 +595,11 @@
             socket.on('uploads-closed', () => {
               markSessionEnded();
             });
+            socket.on('memory-updated', (data) => {
+              if (typeof data.memoryUsage === 'number') {
+                updateMemoryBar(data.memoryUsage, data.memoryLimit);
+              }
+            });
           } catch(e) { /* Socket.io optional */ }
         };
         document.head.appendChild(script);
@@ -425,6 +621,17 @@
               markWindowExpired();
             }
           }
+          // Initialise memory bar from server state
+          if (typeof data.memoryUsage === 'number') {
+            sessionMemoryLimit = data.memoryLimit || sessionMemoryLimit;
+            updateMemoryBar(data.memoryUsage, data.memoryLimit);
+          }
+          // Initialise quota from server state (handles page refresh mid-session)
+          if (typeof data.maxImages === 'number') maxImages = data.maxImages;
+          if (typeof data.imagesUploaded === 'number') imagesUploaded = data.imagesUploaded;
+          const remaining = Math.max(0, maxImages - imagesUploaded);
+          updateQuotaIndicator(remaining);
+          if (remaining === 0) markImageLimitReached();
         } else {
           markSessionEnded();
         }
