@@ -8,7 +8,7 @@
 
 const express = require('express');
 const QRCode = require('qrcode');
-const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining, isSessionValid, isUploadWindowOpen, markUploadsClosed, setReservedBytes, BACKEND_MEMORY_LIMIT, MAX_IMAGES_PER_SESSION } = require('../services/session-store');
+const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining, isSessionValid, isUploadWindowOpen, markUploadsClosed, setReservedBytes, refreshUploadWindow, BACKEND_MEMORY_LIMIT, MAX_IMAGES_PER_SESSION, UPLOAD_WINDOW_MS } = require('../services/session-store');
 
 const router = express.Router();
 
@@ -62,6 +62,8 @@ router.get('/:id', (req, res) => {
     maxImages: MAX_IMAGES_PER_SESSION,
     createdAt: session.createdAt,
     uploadExpiresAt: session.uploadExpiresAt,
+    uploadWindowOpen: isUploadWindowOpen(req.params.id),
+    uploadsClosed: !!session.uploadsClosed,
     daysRemaining,
     memoryUsage: (session.totalBytes || 0) + (session.reservedBytes || 0),
     memoryLimit: BACKEND_MEMORY_LIMIT,

@@ -197,6 +197,20 @@ function isUploadWindowOpen(sessionId) {
 }
 
 /**
+ * Extend the upload window by UPLOAD_WINDOW_MS from now.
+ * Called on each successful upload so active users aren't cut off mid-batch.
+ * @param {string} sessionId
+ * @returns {number|null} new uploadExpiresAt, or null if session not found
+ */
+function refreshUploadWindow(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return null;
+  if (session.uploadsClosed) return session.uploadExpiresAt;
+  session.uploadExpiresAt = Date.now() + UPLOAD_WINDOW_MS;
+  return session.uploadExpiresAt;
+}
+
+/**
  * Mark a session's upload window as closed (from the extension).
  * The session data persists but no more uploads are accepted.
  * Phone page polls for this and shows "Session Ended" overlay.
@@ -218,6 +232,7 @@ module.exports = {
   deleteSession,
   isSessionValid,
   isUploadWindowOpen,
+  refreshUploadWindow,
   markUploadsClosed,
   setReservedBytes,
   cleanupExpiredSessions,

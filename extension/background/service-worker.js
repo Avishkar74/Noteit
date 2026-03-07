@@ -232,84 +232,26 @@ function startPolling(tabId) {
     try {
       // Auto-stop when 3-minute upload window expires
       if (uploadSession.uploadExpiresAt && Date.now() >= uploadSession.uploadExpiresAt) {
+        // Do one FINAL sweep before stopping — catches images uploaded in the last seconds
+        await doFetchSweep(tabId);
         stopPolling();
         return;
       }
 
       const info = await pollForImages(uploadSession.sessionId, uploadSession.lastImageCount || 0);
 
+      // Sync uploadExpiresAt from the backend so we track the REAL window
+      // (the backend refreshes it on each successful upload)
+      if (info.uploadExpiresAt && uploadSession) {
+        uploadSession.uploadExpiresAt = info.uploadExpiresAt;
+        // Update the content script's countdown timer too
+        if (tabId) {
+          broadcastPollingState(tabId, true);
+        }
+      }
+
       if (info.imageCount > (uploadSession.lastImageCount || 0)) {
-        // New images available — fetch in parallel batches of 5, then store sequentially
-        const startIndex = uploadSession.lastImageCount || 0;
-        const endIndex = info.imageCount;
-        const BATCH_SIZE = 5;
-        let newCount = startIndex;
-        let fatalError = false; // NO_ACTIVE_SESSION — no point continuing
-
-        for (let batchStart = startIndex; batchStart < endIndex && !fatalError; batchStart += BATCH_SIZE) {
-          const batchEnd = Math.min(batchStart + BATCH_SIZE, endIndex);
-          const indices = [];
-          for (let i = batchStart; i < batchEnd; i++) indices.push(i);
-
-          // Fetch this batch in parallel
-          const fetchedUrls = await Promise.all(
-            indices.map(i => fetchUploadedImage(uploadSession.sessionId, i))
-          );
-
-          // Store each fetched image sequentially
-          for (let j = 0; j < indices.length; j++) {
-            const i = indices[j];
-            const dataUrl = fetchedUrls[j];
-
-            if (!dataUrl) {
-              // Fetch failed — stop here so we retry from this index next poll
-              fatalError = true;
-              break;
-            }
-
-            const result = await SessionManager.addScreenshot(dataUrl, {
-              url: 'phone-upload',
-              tabTitle: 'Phone Upload',
-            });
-
-            if (result && result.success) {
-              // Track phone image bytes to avoid double-counting in syncMemoryToBackend.
-              // base64 chars → raw bytes: each char encodes 6 bits → length * 6/8 = length * 0.75
-              const base64Part = dataUrl.indexOf(',') !== -1 ? dataUrl.split(',')[1] : dataUrl;
-              const phoneImageBytes = Math.ceil(base64Part.length * 0.75);
-              uploadSession.phoneBytesInExtension = (uploadSession.phoneBytesInExtension || 0) + phoneImageBytes;
-
-              newCount = i + 1;
-              if (tabId) {
-                uploadSession.phoneUploadCount = (uploadSession.phoneUploadCount || 0) + 1;
-                sendToTab(tabId, {
-                  type: MSG.PHONE_IMAGE_RECEIVED,
-                  count: uploadSession.phoneUploadCount,
-                });
-              }
-            } else if (result.error === 'NO_ACTIVE_SESSION') {
-              // Session ended — no point retrying
-              fatalError = true;
-              break;
-            } else {
-              // MEMORY_LIMIT_REACHED or MAX_SCREENSHOTS_REACHED — skip this image,
-              // advance past it so we don't retry infinitely, and stop the batch
-              newCount = i + 1;
-              fatalError = true;
-              break;
-            }
-          }
-        }
-
-        if (uploadSession) uploadSession.lastImageCount = newCount;
-
-        // Send a final refresh signal so the panel shows everything stored so far
-        if (newCount > startIndex && tabId) {
-          sendToTab(tabId, {
-            type: MSG.PHONE_IMAGE_RECEIVED,
-            count: uploadSession ? (uploadSession.phoneUploadCount || 0) : 0,
-          });
-        }
+        await fetchAndStoreImages(tabId, uploadSession.lastImageCount || 0, info.imageCount);
       }
     } catch (pollErr) {
       console.warn('Snabby: poll tick error', pollErr);
@@ -318,6 +260,97 @@ function startPolling(tabId) {
       pollInProgress = false;
     }
   }, 2000);
+}
+
+/**
+ * Fetch images from the backend in batches and store them in the extension session.
+ * Shared by the poll loop and the final sweep.
+ */
+async function fetchAndStoreImages(tabId, startIndex, endIndex) {
+  if (!uploadSession) return;
+  const BATCH_SIZE = 5;
+  let newCount = startIndex;
+  let fatalError = false;
+
+  for (let batchStart = startIndex; batchStart < endIndex && !fatalError; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, endIndex);
+    const indices = [];
+    for (let i = batchStart; i < batchEnd; i++) indices.push(i);
+
+    // Fetch this batch in parallel
+    const fetchedUrls = await Promise.all(
+      indices.map(i => fetchUploadedImage(uploadSession.sessionId, i))
+    );
+
+    // Store each fetched image sequentially
+    for (let j = 0; j < indices.length; j++) {
+      const i = indices[j];
+      const dataUrl = fetchedUrls[j];
+
+      if (!dataUrl) {
+        // Fetch failed — stop here so we retry from this index next poll
+        fatalError = true;
+        break;
+      }
+
+      const result = await SessionManager.addScreenshot(dataUrl, {
+        url: 'phone-upload',
+        tabTitle: 'Phone Upload',
+      });
+
+      if (result && result.success) {
+        // Track phone image bytes to avoid double-counting in syncMemoryToBackend.
+        const base64Part = dataUrl.indexOf(',') !== -1 ? dataUrl.split(',')[1] : dataUrl;
+        const phoneImageBytes = Math.ceil(base64Part.length * 0.75);
+        uploadSession.phoneBytesInExtension = (uploadSession.phoneBytesInExtension || 0) + phoneImageBytes;
+
+        newCount = i + 1;
+        if (tabId) {
+          uploadSession.phoneUploadCount = (uploadSession.phoneUploadCount || 0) + 1;
+          sendToTab(tabId, {
+            type: MSG.PHONE_IMAGE_RECEIVED,
+            count: uploadSession.phoneUploadCount,
+          });
+        }
+      } else if (result.error === 'NO_ACTIVE_SESSION') {
+        // Session ended — no point retrying
+        fatalError = true;
+        break;
+      } else {
+        // MEMORY_LIMIT_REACHED or MAX_SCREENSHOTS_REACHED — skip this image,
+        // advance past it so we don't retry infinitely, and stop the batch
+        newCount = i + 1;
+        fatalError = true;
+        break;
+      }
+    }
+  }
+
+  if (uploadSession) uploadSession.lastImageCount = newCount;
+
+  // Send a final refresh signal so the panel shows everything stored so far
+  if (newCount > startIndex && tabId) {
+    sendToTab(tabId, {
+      type: MSG.PHONE_IMAGE_RECEIVED,
+      count: uploadSession ? (uploadSession.phoneUploadCount || 0) : 0,
+    });
+  }
+}
+
+/**
+ * Final poll sweep — called once when the upload window expires.
+ * Fetches any remaining images that were uploaded in the last seconds.
+ */
+async function doFetchSweep(tabId) {
+  if (!uploadSession) return;
+  try {
+    const info = await pollForImages(uploadSession.sessionId, uploadSession.lastImageCount || 0);
+    if (info.imageCount > (uploadSession.lastImageCount || 0)) {
+      await fetchAndStoreImages(tabId, uploadSession.lastImageCount || 0, info.imageCount);
+    }
+  } catch (err) {
+    console.warn('Snabby: final sweep error', err);
+  }
 }
 
 function stopPolling() {

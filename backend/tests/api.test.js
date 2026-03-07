@@ -60,6 +60,36 @@ describe('API Routes', () => {
       const res = await request(app).get('/api/session/nonexistent');
       expect(res.status).toBe(404);
     });
+
+    test('returns uploadsClosed and uploadWindowOpen fields', async () => {
+      const { sessionId } = store.createSession();
+      const res = await request(app).get(`/api/session/${sessionId}`);
+      expect(res.status).toBe(200);
+      expect(res.body.uploadsClosed).toBe(false);
+      expect(res.body.uploadWindowOpen).toBe(true);
+      store.deleteSession(sessionId);
+    });
+
+    test('uploadsClosed is true after marking uploads closed', async () => {
+      const { sessionId } = store.createSession();
+      store.markUploadsClosed(sessionId);
+      const res = await request(app).get(`/api/session/${sessionId}`);
+      expect(res.status).toBe(200);
+      expect(res.body.uploadsClosed).toBe(true);
+      expect(res.body.uploadWindowOpen).toBe(false);
+      store.deleteSession(sessionId);
+    });
+
+    test('uploadWindowOpen is false after window expires', async () => {
+      const { sessionId } = store.createSession();
+      const session = store.getSession(sessionId);
+      session.uploadExpiresAt = Date.now() - 1000; // expired
+      const res = await request(app).get(`/api/session/${sessionId}`);
+      expect(res.status).toBe(200);
+      expect(res.body.uploadsClosed).toBe(false);
+      expect(res.body.uploadWindowOpen).toBe(false);
+      store.deleteSession(sessionId);
+    });
   });
 
   describe('DELETE /api/session/:id', () => {
@@ -204,6 +234,48 @@ describe('API Routes', () => {
       store.deleteSession(sessionId);
     });
 
+    test('upload response includes uploadExpiresAt', async () => {
+      const { sessionId, token } = store.createSession();
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      const before = Date.now();
+      const res = await request(app)
+        .post(`/api/upload/${sessionId}`)
+        .set('X-Upload-Token', token)
+        .attach('image', pngBuffer, 'test.png');
+      const after = Date.now();
+      expect(res.status).toBe(200);
+      expect(res.body.uploadExpiresAt).toBeDefined();
+      expect(res.body.uploadExpiresAt).toBeGreaterThanOrEqual(before + store.UPLOAD_WINDOW_MS);
+      expect(res.body.uploadExpiresAt).toBeLessThanOrEqual(after + store.UPLOAD_WINDOW_MS);
+      store.deleteSession(sessionId);
+    });
+
+    test('upload refreshes the upload window', async () => {
+      const { sessionId, token } = store.createSession();
+      const session = store.getSession(sessionId);
+      // Simulate near-expiry
+      session.uploadExpiresAt = Date.now() + 5000;
+      const oldExpiry = session.uploadExpiresAt;
+
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      const res = await request(app)
+        .post(`/api/upload/${sessionId}`)
+        .set('X-Upload-Token', token)
+        .attach('image', pngBuffer, 'test.png');
+      expect(res.status).toBe(200);
+      // Window should have been extended well beyond the old 5-second expiry
+      const updatedSession = store.getSession(sessionId);
+      expect(updatedSession.uploadExpiresAt).toBeGreaterThan(oldExpiry);
+      expect(updatedSession.uploadExpiresAt - Date.now()).toBeGreaterThan(store.UPLOAD_WINDOW_MS - 1000);
+      store.deleteSession(sessionId);
+    });
+
     test('returns 409 with SESSION_IMAGE_LIMIT_REACHED when session is full', async () => {
       const { sessionId, token } = store.createSession();
       // Fill session to the limit directly via store
@@ -253,6 +325,101 @@ describe('API Routes', () => {
       const res = await request(app).get('/upload/test-session');
       expect(res.status).toBe(200);
       expect(res.headers['content-type']).toContain('text/html');
+    });
+  });
+
+  // ─── Close Uploads ──────────────────────
+
+  describe('POST /api/session/:id/close-uploads', () => {
+    test('marks uploads as closed', async () => {
+      const { sessionId } = store.createSession();
+      const res = await request(app).post(`/api/session/${sessionId}/close-uploads`);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(store.isUploadWindowOpen(sessionId)).toBe(false);
+      store.deleteSession(sessionId);
+    });
+
+    test('rejects uploads after close-uploads is called', async () => {
+      const { sessionId, token } = store.createSession();
+      await request(app).post(`/api/session/${sessionId}/close-uploads`);
+
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      const res = await request(app)
+        .post(`/api/upload/${sessionId}`)
+        .set('X-Upload-Token', token)
+        .attach('image', pngBuffer, 'test.png');
+      expect(res.status).toBe(403);
+      store.deleteSession(sessionId);
+    });
+  });
+
+  // ─── Image Retrieval ────────────────────
+
+  describe('GET /api/session/:id/images/:index', () => {
+    test('returns uploaded image by index', async () => {
+      const { sessionId, token } = store.createSession();
+      const pngBuffer = Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      );
+      await request(app)
+        .post(`/api/upload/${sessionId}`)
+        .set('X-Upload-Token', token)
+        .attach('image', pngBuffer, 'test.png');
+
+      const res = await request(app).get(`/api/session/${sessionId}/images/0`);
+      expect(res.status).toBe(200);
+      expect(res.body.dataUrl).toContain('data:image/');
+      expect(res.body.index).toBe(0);
+      expect(res.body.addedAt).toBeDefined();
+      store.deleteSession(sessionId);
+    });
+
+    test('returns 404 for out-of-bounds index', async () => {
+      const { sessionId } = store.createSession();
+      const res = await request(app).get(`/api/session/${sessionId}/images/0`);
+      expect(res.status).toBe(404);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns 404 for non-existent session', async () => {
+      const res = await request(app).get('/api/session/fake/images/0');
+      expect(res.status).toBe(404);
+    });
+  });
+
+  // ─── Session Validity ───────────────────
+
+  describe('GET /api/session/:id/valid', () => {
+    test('returns valid and uploadWindowOpen for active session', async () => {
+      const { sessionId } = store.createSession();
+      const res = await request(app).get(`/api/session/${sessionId}/valid`);
+      expect(res.status).toBe(200);
+      expect(res.body.valid).toBe(true);
+      expect(res.body.uploadWindowOpen).toBe(true);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns uploadWindowOpen false after window expires', async () => {
+      const { sessionId } = store.createSession();
+      const session = store.getSession(sessionId);
+      session.uploadExpiresAt = Date.now() - 1000;
+      const res = await request(app).get(`/api/session/${sessionId}/valid`);
+      expect(res.status).toBe(200);
+      expect(res.body.valid).toBe(true);
+      expect(res.body.uploadWindowOpen).toBe(false);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns invalid for non-existent session', async () => {
+      const res = await request(app).get('/api/session/fake/valid');
+      expect(res.status).toBe(200);
+      expect(res.body.valid).toBe(false);
+      expect(res.body.uploadWindowOpen).toBe(false);
     });
   });
 });

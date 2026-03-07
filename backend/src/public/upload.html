@@ -448,6 +448,11 @@
           updateCounter();
           updateQuotaIndicator(remaining);
           updateMemoryBar(data.memoryUsage, data.memoryLimit);
+          // Sync upload window expiry from server (it extends on each successful upload)
+          if (typeof data.uploadExpiresAt === 'number') {
+            uploadExpiresAt = data.uploadExpiresAt;
+            uploadWindowOpen = true; // if we got a success, window is open
+          }
           showStatus(`✓ Uploaded! (${totalUploads} total, ${remaining} more allowed)`, 'success');
           if (remaining === 0) {
             markImageLimitReached();
@@ -614,6 +619,8 @@
           const data = await res.json();
           if (data.uploadsClosed) {
             markSessionEnded();
+          } else if (data.uploadWindowOpen === false) {
+            markWindowExpired();
           } else if (data.uploadExpiresAt) {
             uploadExpiresAt = data.uploadExpiresAt;
             // Check if already expired

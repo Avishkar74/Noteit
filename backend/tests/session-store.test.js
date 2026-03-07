@@ -159,4 +159,81 @@ describe('Session Store', () => {
       expect(store.getSession(sessionId)).toBeNull();
     });
   });
+
+  describe('isUploadWindowOpen', () => {
+    test('returns true within the upload window', () => {
+      const { sessionId } = store.createSession();
+      expect(store.isUploadWindowOpen(sessionId)).toBe(true);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns false after upload window expires', () => {
+      const { sessionId } = store.createSession();
+      const session = store.getSession(sessionId);
+      // Set uploadExpiresAt to 1 second ago
+      session.uploadExpiresAt = Date.now() - 1000;
+      expect(store.isUploadWindowOpen(sessionId)).toBe(false);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns false when uploads are closed', () => {
+      const { sessionId } = store.createSession();
+      store.markUploadsClosed(sessionId);
+      expect(store.isUploadWindowOpen(sessionId)).toBe(false);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns false for non-existent session', () => {
+      expect(store.isUploadWindowOpen('nonexistent')).toBe(false);
+    });
+  });
+
+  describe('refreshUploadWindow', () => {
+    test('extends the upload window from now', () => {
+      const { sessionId } = store.createSession();
+      const session = store.getSession(sessionId);
+      // Simulate near-expiry: set uploadExpiresAt to 5 seconds from now
+      session.uploadExpiresAt = Date.now() + 5000;
+
+      const before = Date.now();
+      const newExpiry = store.refreshUploadWindow(sessionId);
+      const after = Date.now();
+
+      // New expiry should be ~UPLOAD_WINDOW_MS from now (not from the old expiry)
+      expect(newExpiry).toBeGreaterThanOrEqual(before + store.UPLOAD_WINDOW_MS);
+      expect(newExpiry).toBeLessThanOrEqual(after + store.UPLOAD_WINDOW_MS);
+      store.deleteSession(sessionId);
+    });
+
+    test('returns null for non-existent session', () => {
+      expect(store.refreshUploadWindow('fake')).toBeNull();
+    });
+
+    test('does not extend window when uploads are closed', () => {
+      const { sessionId } = store.createSession();
+      const session = store.getSession(sessionId);
+      const originalExpiry = session.uploadExpiresAt;
+      store.markUploadsClosed(sessionId);
+
+      const result = store.refreshUploadWindow(sessionId);
+      expect(result).toBe(originalExpiry); // unchanged
+      store.deleteSession(sessionId);
+    });
+
+    test('keeps the upload window open after refresh even if was near expiry', () => {
+      const { sessionId } = store.createSession();
+      const session = store.getSession(sessionId);
+      // Simulate near-expiry
+      session.uploadExpiresAt = Date.now() + 1000;
+      expect(store.isUploadWindowOpen(sessionId)).toBe(true);
+
+      store.refreshUploadWindow(sessionId);
+      // Should still be open with fresh 3 minutes
+      expect(store.isUploadWindowOpen(sessionId)).toBe(true);
+      // And the session's uploadExpiresAt should be in the future by ~UPLOAD_WINDOW_MS
+      const updated = store.getSession(sessionId);
+      expect(updated.uploadExpiresAt - Date.now()).toBeGreaterThan(store.UPLOAD_WINDOW_MS - 1000);
+      store.deleteSession(sessionId);
+    });
+  });
 });

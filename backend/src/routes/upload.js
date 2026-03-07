@@ -9,7 +9,7 @@
 const express = require('express');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
-const { getSession, validateToken, addImage, isUploadWindowOpen, MAX_IMAGES_PER_SESSION } = require('../services/session-store');
+const { getSession, validateToken, addImage, isUploadWindowOpen, refreshUploadWindow, MAX_IMAGES_PER_SESSION } = require('../services/session-store');
 
 const router = express.Router();
 
@@ -94,6 +94,10 @@ router.post('/:sessionId', uploadLimiter, upload.single('image'), async (req, re
       });
     }
 
+    // Refresh the 3-minute upload window on each successful upload
+    // so active users aren't cut off mid-batch
+    const newExpiry = refreshUploadWindow(sessionId);
+
     res.json({
       success: true,
       imageCount: result.imageCount,
@@ -101,6 +105,7 @@ router.post('/:sessionId', uploadLimiter, upload.single('image'), async (req, re
       imagesRemaining: result.imagesRemaining,
       memoryUsage: result.memoryUsage,
       memoryLimit: result.memoryLimit,
+      uploadExpiresAt: newExpiry,
     });
   } catch (err) {
     console.error('Upload processing error:', err.message);
