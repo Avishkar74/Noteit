@@ -32,7 +32,12 @@
     }
   ],
   "action": {
-    "default_title": "Snabby – Click to activate"
+    "default_title": "Snabby – Click to activate",
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "32": "assets/icons/icon32.png",
+      "48": "assets/icons/icon48.png"
+    }
   },
   "icons": {
     "16": "assets/icons/icon16.png",

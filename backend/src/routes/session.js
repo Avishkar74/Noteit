@@ -8,7 +8,7 @@
 
 const express = require('express');
 const QRCode = require('qrcode');
-const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining, isSessionValid, isUploadWindowOpen, markUploadsClosed, setReservedBytes, refreshUploadWindow, BACKEND_MEMORY_LIMIT, MAX_IMAGES_PER_SESSION, UPLOAD_WINDOW_MS } = require('../services/session-store');
+const { createSession, getSession, deleteSession, getOcrTexts, getDaysRemaining, isSessionValid, isUploadWindowOpen, markUploadsClosed, setReservedBytes, refreshUploadWindow, markPhoneOpened, waitForPhoneOpen, BACKEND_MEMORY_LIMIT, MAX_IMAGES_PER_SESSION, UPLOAD_WINDOW_MS } = require('../services/session-store');
 
 const router = express.Router();
 
@@ -23,7 +23,22 @@ router.post('/create', async (req, res) => {
     }
 
     const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-    const uploadUrl = `${baseUrl}/upload/${result.sessionId}?token=${result.token}`;
+    const port = parseInt(process.env.PORT, 10) || 3000;
+    let normalizedBaseUrl = baseUrl;
+    try {
+      const url = new URL(baseUrl);
+      const isHttp = url.protocol === 'http:';
+      const isHttps = url.protocol === 'https:';
+      const needsPort = !url.port && ((isHttp && port !== 80) || (isHttps && port !== 443));
+      if (needsPort) {
+        url.port = String(port);
+        normalizedBaseUrl = url.toString().replace(/\/$/, '');
+      }
+    } catch {
+      // If BASE_URL is malformed, fall back to the raw value.
+      normalizedBaseUrl = baseUrl;
+    }
+    const uploadUrl = `${normalizedBaseUrl}/upload/${result.sessionId}?token=${result.token}`;
 
     // Generate QR code as data URL
     const qrDataUrl = await QRCode.toDataURL(uploadUrl, {
@@ -31,6 +46,9 @@ router.post('/create', async (req, res) => {
       margin: 2,
       color: { dark: '#ffffff', light: '#0F0F0F' },
     });
+
+    // Helpful debug log: print the exact upload URL so you can open it on the phone
+    console.log(`Upload URL (QR): ${uploadUrl}`);
 
     res.json({
       sessionId: result.sessionId,
@@ -114,6 +132,25 @@ router.get('/:id/valid', (req, res) => {
   const valid = isSessionValid(req.params.id);
   const windowOpen = valid ? isUploadWindowOpen(req.params.id) : false;
   res.json({ valid, uploadWindowOpen: windowOpen });
+});
+
+// Mark that the phone has opened the upload page (QR scanned)
+router.post('/:id/scan', (req, res) => {
+  const openedAt = markPhoneOpened(req.params.id);
+  if (!openedAt) {
+    return res.status(404).json({ error: 'Session not found or expired.' });
+  }
+  res.json({ scanned: true, openedAt });
+});
+
+// Long-poll until phone opens the upload page or timeout
+router.get('/:id/await-scan', async (req, res) => {
+  const timeoutMs = Math.min(parseInt(req.query.timeout, 10) || 25000, 60000);
+  const result = await waitForPhoneOpen(req.params.id, timeoutMs);
+  if (result.error) {
+    return res.status(404).json({ scanned: false, error: result.error });
+  }
+  res.json(result);
 });
 
 // Sync laptop screenshot bytes from the extension so the phone page sees combined usage

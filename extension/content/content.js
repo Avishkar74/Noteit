@@ -825,11 +825,12 @@
       // Polling indicator shows in active view; user can stop from there.
       qrModalOpen = false;
       overlay.remove();
-      // Refresh panel to show polling indicator and already-stored images
-      if (panelOpen) await refreshPanelContent();
-      // Schedule follow-up refreshes to catch images still being fetched/stored by the service worker
-      setTimeout(() => { if (panelOpen && !qrModalOpen) refreshPanelContent(); }, 2000);
-      setTimeout(() => { if (panelOpen && !qrModalOpen) refreshPanelContent(); }, 5000);
+      // Only refresh if polling actually started (i.e., QR was scanned)
+      if (panelOpen && isUploadPolling) {
+        await refreshPanelContent();
+        // Follow-up refresh to catch images still being fetched/stored by the service worker
+        setTimeout(() => { if (panelOpen && !qrModalOpen) refreshPanelContent(); }, 2000);
+      }
     });
 
     panel.appendChild(overlay);

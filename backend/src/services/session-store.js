@@ -34,6 +34,8 @@ function createSession(name) {
     name: name || 'Untitled',
     createdAt: now,
     uploadExpiresAt: now + UPLOAD_WINDOW_MS,
+    phoneOpenedAt: null,
+    scanWaiters: [],
     images: [],
     ocrTexts: [],
     totalBytes: 0,    // running tally of phone-uploaded image bytes
@@ -130,6 +132,40 @@ function getOcrTexts(sessionId) {
 
 function deleteSession(sessionId) {
   sessions.delete(sessionId);
+}
+
+function markPhoneOpened(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return null;
+  if (!session.phoneOpenedAt) {
+    session.phoneOpenedAt = Date.now();
+  }
+  if (session.scanWaiters && session.scanWaiters.length > 0) {
+    const waiters = session.scanWaiters.slice();
+    session.scanWaiters = [];
+    waiters.forEach((waiter) => {
+      clearTimeout(waiter.timer);
+      waiter.resolve({ scanned: true, openedAt: session.phoneOpenedAt });
+    });
+  }
+  return session.phoneOpenedAt;
+}
+
+function waitForPhoneOpen(sessionId, timeoutMs) {
+  const session = getSession(sessionId);
+  if (!session) return Promise.resolve({ scanned: false, error: 'SESSION_NOT_FOUND' });
+  if (session.phoneOpenedAt) {
+    return Promise.resolve({ scanned: true, openedAt: session.phoneOpenedAt });
+  }
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({ scanned: false, timeout: true });
+    }, Math.max(1000, timeoutMs || 25000));
+
+    if (!session.scanWaiters) session.scanWaiters = [];
+    session.scanWaiters.push({ resolve, timer });
+  });
 }
 
 /**
@@ -230,6 +266,8 @@ module.exports = {
   getImages,
   getOcrTexts,
   deleteSession,
+  markPhoneOpened,
+  waitForPhoneOpen,
   isSessionValid,
   isUploadWindowOpen,
   refreshUploadWindow,

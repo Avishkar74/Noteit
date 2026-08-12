@@ -34,6 +34,17 @@ app.use(cors());
 app.use(express.json({ limit: '12mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Simple request logger for debugging network reachability from phones
+app.use((req, res, next) => {
+  try {
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} from ${ip}`);
+  } catch (e) {
+    // ignore logging errors
+  }
+  next();
+});
+
 // Rate limiting (skip in test environment)
 // This global limiter protects all /api/ routes except /api/upload/ which
 // has its own per-session rate limiter.

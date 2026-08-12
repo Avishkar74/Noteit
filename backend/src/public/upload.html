@@ -342,6 +342,13 @@
     let sessionMemoryLimit = 200 * 1024 * 1024; // updated from server on load
     let uploadExpiresAt = Date.now() + 3 * 60 * 1000; // fallback
 
+    // Notify backend that the QR was scanned and the phone page opened
+    (function notifyScan() {
+      try {
+        fetch(`/api/session/${sessionId}/scan`, { method: 'POST' }).catch(() => {});
+      } catch { /* ignore */ }
+    })();
+
     dropZone.addEventListener('click', () => galleryInput.click());
     galleryBtn.addEventListener('click', () => galleryInput.click());
     cameraBtn.addEventListener('click', () => cameraInput.click());

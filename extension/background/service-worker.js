@@ -91,6 +91,7 @@ async function runWithConcurrency(tasks, limit) {
 // ─── QR Upload Session State ────────────────────────
 let uploadSession = null;   // { sessionId, token, qrCode, uploadUrl, pollTimer, uploadExpiresAt, tabId }
 let disconnecting = false;  // true while disconnectUploadSession() is awaiting — prevents port.onDisconnect race
+let scanAbortController = null;
 
 // Keep-alive port: content script opens a long-lived connection so the
 // service worker stays awake while polling for phone uploads.
@@ -214,8 +215,10 @@ function startPolling(tabId) {
   uploadSession.tabId = tabId;
   uploadSession.uploadExpiresAt = Date.now() + WSN_CONSTANTS.UPLOAD_WINDOW_MS;
 
-  // Broadcast that polling has started
-  broadcastPollingState(tabId, true);
+  // Polling starts only after QR scan. Show the polling indicator now so
+  // the timer appears immediately on the panel.
+  uploadSession.pollingShown = true;
+  if (tabId) broadcastPollingState(tabId, true);
   
   // Poll every 2 seconds
   let pollInProgress = false;
@@ -388,6 +391,10 @@ async function disconnectUploadSession(notifyBackend = true) {
   if (!uploadSession) return;
   const sessionId = uploadSession.sessionId;
   disconnecting = true;
+  if (scanAbortController) {
+    scanAbortController.abort();
+    scanAbortController = null;
+  }
   stopPolling();
   uploadSession = null;
 
@@ -407,6 +414,36 @@ async function closeUploadSession() {
   // OLD session URL doesn't receive 'uploads-closed' and show the stopped overlay.
   // The old backend session expires naturally after 7 days.
   await disconnectUploadSession(false);
+}
+
+async function awaitPhoneScan(tabId) {
+  if (!uploadSession) return;
+  const backendUrl = getBackendUrl();
+  const sessionId = uploadSession.sessionId;
+
+  async function waitOnce() {
+    if (!uploadSession || uploadSession.sessionId !== sessionId) return;
+    scanAbortController = new AbortController();
+    try {
+      const res = await fetch(`${backendUrl}/api/session/${sessionId}/await-scan?timeout=25000`, {
+        signal: scanAbortController.signal,
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.scanned && uploadSession && uploadSession.sessionId === sessionId) {
+        startPolling(tabId);
+        return;
+      }
+    } catch {
+      // ignore and retry
+    }
+
+    if (uploadSession && uploadSession.sessionId === sessionId && !uploadSession.pollTimer) {
+      waitOnce();
+    }
+  }
+
+  waitOnce();
 }
 
 // ─── Extension Icon Click (Activation Toggle) ───────
@@ -772,9 +809,9 @@ async function handleMessage(request, sender) {
     // Sync laptop screenshot bytes so the phone page shows the true combined usage
     await syncMemoryToBackend();
 
-    // Start polling for new images
+    // Wait for the phone to open the QR URL before starting polling
     if (tabId) {
-      startPolling(tabId);
+      awaitPhoneScan(tabId);
     }
 
     return {
